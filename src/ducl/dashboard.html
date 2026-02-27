@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disk Usage Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --danger: #f85149;
+    --warning: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; white-space: nowrap; }
+  header .stats {
+    display: flex; gap: 20px; margin-left: auto;
+    font-size: 14px; color: var(--text-muted); white-space: nowrap;
+  }
+  header .stats strong { color: var(--accent); }
+  .mode-switch {
+    display: inline-flex; border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden; font-size: 12px;
+    cursor: pointer; user-select: none;
+  }
+  .mode-switch .mode-opt {
+    padding: 3px 12px; color: var(--text-muted);
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .mode-switch .mode-opt.active {
+    background: rgba(88,166,255,0.2); color: var(--accent); font-weight: 600;
+  }
+
+  .controls-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 24px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .controls-bar .label {
+    font-size: 11px; color: var(--text-muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px;
+  }
+  .controls-bar .hint {
+    font-size: 11px; color: var(--text-muted); font-style: italic;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 12px; border-radius: 14px; font-size: 12px;
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text-muted);
+    transition: all 0.15s; user-select: none; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active {
+    background: rgba(88,166,255,0.2); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+  .chip.excluded {
+    background: rgba(248,81,73,0.15); border-color: var(--danger);
+    color: var(--danger); text-decoration: line-through;
+  }
+  .chip .chip-size { font-size: 11px; opacity: 0.7; }
+  .clear-btn {
+    padding: 3px 12px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted);
+    cursor: pointer; border-radius: 14px; font-size: 12px;
+    transition: all 0.15s; margin-left: auto;
+  }
+  .clear-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+  .command-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 24px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .command-bar .label {
+    font-size: 11px; color: var(--text-muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
+  }
+  .command-bar .command-text {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12px; color: var(--accent);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; flex: 1; overflow-x: auto; white-space: nowrap;
+  }
+  .command-bar .copy-btn {
+    padding: 3px 12px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted);
+    cursor: pointer; border-radius: 14px; font-size: 12px;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .command-bar .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .main { padding: 16px 24px; display: flex; flex-direction: column; gap: 16px; }
+  .chart-container {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .chart-title {
+    font-size: 15px; font-weight: 600; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chart-title .badge {
+    font-size: 11px; background: var(--border); padding: 2px 8px;
+    border-radius: 10px; color: var(--text-muted); font-weight: 400;
+  }
+
+  .detail-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; display: none;
+  }
+  .detail-panel.visible { display: block; }
+  .detail-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  }
+  .detail-header h3 { font-size: 15px; font-weight: 600; }
+  .detail-header .path {
+    font-size: 12px; color: var(--text-muted);
+    font-family: monospace; word-break: break-all;
+  }
+  .detail-header .close-btn {
+    margin-left: auto; cursor: pointer; color: var(--text-muted);
+    font-size: 18px; padding: 0 4px;
+  }
+  .detail-header .close-btn:hover { color: var(--danger); }
+  .detail-cols { display: flex; gap: 16px; }
+  .detail-cols > div { flex: 1; }
+  .file-list { font-size: 13px; }
+  .file-list table { width: 100%; border-collapse: collapse; }
+  .file-list th {
+    text-align: left; font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--border);
+  }
+  .file-list td {
+    padding: 3px 8px; border-bottom: 1px solid rgba(48,54,61,0.5);
+    font-family: monospace; font-size: 12px;
+  }
+  .file-list td.size { text-align: right; color: var(--accent); }
+
+  .loading {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; font-size: 18px; color: var(--text-muted);
+    flex-direction: column; gap: 8px;
+  }
+  .loading.hidden { display: none; }
+  .loading .progress { font-size: 14px; }
+
+  .js-plotly-plot .plotly .modebar { top: 4px !important; right: 4px !important; }
+
+  .perf-overlay {
+    position: fixed; bottom: 8px; right: 8px; z-index: 999;
+    background: rgba(22,27,34,0.92); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px;
+    font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11px;
+    color: var(--text-muted); line-height: 1.6; pointer-events: none;
+    min-width: 220px; display: none;
+  }
+  .perf-overlay .perf-title { color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .perf-overlay .perf-row { display: flex; justify-content: space-between; gap: 12px; }
+  .perf-overlay .perf-val { color: var(--text); font-weight: 600; }
+  .perf-overlay .perf-slow { color: var(--danger); }
+  .perf-overlay .perf-ok { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<div class="perf-overlay" id="perf-overlay">
+  <div class="perf-title">Render timing</div>
+  <div id="perf-body">waiting...</div>
+</div>
+
+<div class="loading" id="loading">
+  <div>Loading data...</div>
+  <div class="progress" id="load-progress"></div>
+</div>
+
+<header>
+  <h1>Disk Usage Dashboard</h1>
+  <div class="mode-switch" id="mode-switch">
+    <span class="mode-opt active" data-mode="size">Size</span>
+    <span class="mode-opt" data-mode="count">Count</span>
+  </div>
+  <div class="stats" id="header-stats"></div>
+</header>
+
+<div class="controls-bar" id="ext-bar">
+  <span class="label">Extensions:</span>
+</div>
+
+<div class="controls-bar" id="folder-bar">
+  <span class="label">Folders:</span>
+</div>
+
+<div class="command-bar" id="command-bar">
+  <span class="label">Delete cmd:</span>
+  <code class="command-text" id="command-text">python query.py SCAN.feather --delete</code>
+  <button class="copy-btn" id="copy-cmd">Copy</button>
+</div>
+
+<div class="main">
+  <div class="chart-container">
+    <div class="chart-title">
+      Folder Treemap
+      <span class="badge" id="treemap-badge">all extensions</span>
+      <span class="badge" style="font-style:italic;">click to drill down</span>
+    </div>
+    <div id="treemap-chart" style="height:70vh;"></div>
+  </div>
+
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-header">
+      <div>
+        <h3 id="detail-name"></h3>
+        <div class="path" id="detail-path"></div>
+      </div>
+      <span class="close-btn" id="detail-close">&times;</span>
+    </div>
+    <div class="detail-cols">
+      <div>
+        <div id="ext-breakdown-chart" style="height:220px;"></div>
+        <div id="hist-chart" style="height:220px;margin-top:8px;"></div>
+      </div>
+      <div class="file-list" id="file-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const STATE = {
+  selectedExts: new Set(),
+  excludedExts: new Set(),
+  selectedFolders: new Set(),
+  excludedFolders: new Set(),
+  selectedNode: null,
+  sizeMode: 'size',  // 'size' (bytes) or 'count' (file count)
+};
+
+let TREE = [];
+let EXTENSIONS = [];
+let LEAF_FOLDERS = [];
+let HIST_LABELS = [];
+
+// Raw cross-product cube cells per node (from cube.json)
+// CUBE_CELLS[nodeId] = [{ext, folder, bin, count, total}, ...]
+let CUBE_CELLS = {};
+
+// Example files per node per bin (from examples_summary.json)
+let EXAMPLES_RAW = {};
+
+// Computed on every filter change by recomputeSizes()
+let RECURSIVE_SIZES = {};
+let TOTAL_FILES = 0;
+
+// Cross-filtered chip sizes (updated by recomputeSizes)
+// Ext chips show totals filtered by folder filters only (not ext filters)
+// Folder chips show totals filtered by ext filters only (not folder filters)
+let CHIP_EXT_SIZES = {};   // ext → filtered total
+let CHIP_FOLDER_SIZES = {}; // folder → filtered total
+
+let NODE_MAP = {};
+let CHILDREN_MAP = {};
+let NODE_PATH_PARTS = {};   // node.id → Set of path parts
+let FOLDER_TAG_SET = new Set();  // set of folder names from meta
+
+// Pre-sorted tree (deepest first) for bottom-up walks
+let TREE_BOTTOM_UP = [];
+
+// ============================================================
+// Utilities
+// ============================================================
+function fmtSize(bytes) {
+  if (bytes == null || bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let i = 0, v = Math.abs(bytes);
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (bytes < 0 ? '-' : '') + v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+function fmtCount(n) {
+  if (n == null || n === 0) return '0';
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+// Format value according to current size mode
+function fmtVal(n) { return STATE.sizeMode === 'count' ? fmtCount(n) : fmtSize(n); }
+// Extract the relevant field from a cube cell
+function cellVal(cell) { return STATE.sizeMode === 'count' ? cell.count : cell.total; }
+
+// ============================================================
+// URL hash state (for shareable links)
+// ============================================================
+let _hashTimer = 0;
+let _lastHash = '';
+function stateToHash() {
+  clearTimeout(_hashTimer);
+  _hashTimer = setTimeout(() => {
+    const p = new URLSearchParams();
+    if (STATE.sizeMode !== 'size') p.set('mode', STATE.sizeMode);
+    if (STATE.selectedExts.size > 0) p.set('ext', [...STATE.selectedExts].join(','));
+    if (STATE.excludedExts.size > 0) p.set('-ext', [...STATE.excludedExts].join(','));
+    if (STATE.selectedFolders.size > 0) p.set('folder', [...STATE.selectedFolders].join(','));
+    if (STATE.excludedFolders.size > 0) p.set('-folder', [...STATE.excludedFolders].join(','));
+    if (STATE.selectedNode) p.set('node', STATE.selectedNode);
+    if (treemapViewRoot) p.set('view', treemapViewRoot);
+    const h = p.toString();
+    const target = h ? '#' + h : window.location.pathname + window.location.search;
+    if (target === _lastHash) return;
+    _lastHash = target;
+    try { history.replaceState(null, '', target); } catch (_) {}
+  }, 400);
+}
+
+function stateFromHash() {
+  const raw = window.location.hash.slice(1);
+  if (!raw) return;
+  const p = new URLSearchParams(raw);
+  if (p.has('mode')) STATE.sizeMode = p.get('mode');
+  if (p.has('ext')) for (const e of p.get('ext').split(',')) if (e) STATE.selectedExts.add(e);
+  if (p.has('-ext')) for (const e of p.get('-ext').split(',')) if (e) STATE.excludedExts.add(e);
+  if (p.has('folder')) for (const f of p.get('folder').split(',')) if (f) STATE.selectedFolders.add(f);
+  if (p.has('-folder')) for (const f of p.get('-folder').split(',')) if (f) STATE.excludedFolders.add(f);
+  if (p.has('node')) STATE.selectedNode = p.get('node');
+  if (p.has('view')) treemapViewRoot = p.get('view');
+}
+
+const PLOTLY_LAYOUT = {
+  paper_bgcolor: '#161b22', plot_bgcolor: '#161b22',
+  font: { color: '#e6edf3', size: 12 },
+  margin: { t: 30, b: 4, l: 4, r: 4 },
+};
+const PLOTLY_CFG = { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d'] };
+
+// ============================================================
+// Performance timing
+// ============================================================
+const PERF = {};
+function perfStart(label) { PERF[label] = performance.now(); }
+function perfEnd(label) { PERF[label] = performance.now() - PERF[label]; return PERF[label]; }
+function perfShow() {
+  const el = document.getElementById('perf-body');
+  if (!el) return;
+  const fmt = (ms) => ms < 1 ? '<1ms' : ms.toFixed(1) + 'ms';
+  const cls = (ms) => ms > 50 ? 'perf-slow' : 'perf-ok';
+  const rows = [
+    ['hyparquet import', PERF.import],
+    ['fetch (parquet)', PERF.fetch],
+    ['parse → objects', PERF.parse],
+    ['buildIndices', PERF.indices],
+    ['recomputeSizes', PERF.recompute],
+    ['renderStats', PERF.stats],
+    ['renderExtChips', PERF.extChips],
+    ['renderFolderChips', PERF.folderChips],
+    ['renderTreemap', PERF.treemap],
+    ['renderDetail', PERF.detail],
+    ['TOTAL', PERF.total],
+  ];
+  el.innerHTML = rows
+    .filter(([,v]) => v != null)
+    .map(([k,v]) => `<div class="perf-row"><span>${k}</span><span class="perf-val ${cls(v)}">${fmt(v)}</span></div>`)
+    .join('');
+  // Also log to console for easy copy
+  const summary = rows.filter(([,v]) => v != null).map(([k,v]) => `${k}: ${fmt(v)}`).join(' | ');
+  console.log('[perf]', summary);
+}
+
+const N_BINS = 12;
+
+// ============================================================
+// Exact cross-filtering
+// ============================================================
+function matchesExtFilters(cell) {
+  if (STATE.selectedExts.size > 0) {
+    if (cell.ext === null || !STATE.selectedExts.has(cell.ext)) return false;
+  }
+  if (STATE.excludedExts.size > 0) {
+    if (cell.ext !== null && STATE.excludedExts.has(cell.ext)) return false;
+  }
+  return true;
+}
+
+function matchesFolderFilters(nodeId) {
+  const parts = NODE_PATH_PARTS[nodeId];
+  if (!parts) return true;
+  if (STATE.selectedFolders.size > 0) {
+    let match = false;
+    for (const f of STATE.selectedFolders) {
+      if (parts.has(f)) { match = true; break; }
+    }
+    if (!match) return false;
+  }
+  if (STATE.excludedFolders.size > 0) {
+    for (const f of STATE.excludedFolders) {
+      if (parts.has(f)) return false;
+    }
+  }
+  return true;
+}
+
+function recomputeSizes() {
+  RECURSIVE_SIZES = {};
+  TOTAL_FILES = 0;
+  CHIP_EXT_SIZES = {};
+  CHIP_FOLDER_SIZES = {};
+
+  // Pre-compute subtree scope for chip accumulation
+  let chipScope = null;  // null = global
+  if (STATE.selectedNode && NODE_MAP[STATE.selectedNode]) {
+    chipScope = new Set();
+    const stack = [STATE.selectedNode];
+    while (stack.length > 0) {
+      const nid = stack.pop();
+      chipScope.add(nid);
+      const ch = CHILDREN_MAP[nid];
+      if (ch) for (const c of ch) if (!c.id.endsWith('/__rest__')) stack.push(c.id);
+    }
+  }
+
+  // 1. Direct (non-recursive) filtered sizes per node + chip sizes
+  const directSizes = {};
+  for (const node of TREE) {
+    if (node.id.endsWith('/__rest__')) continue;
+    const cells = CUBE_CELLS[node.id];
+    if (!cells) { directSizes[node.id] = 0; continue; }
+
+    const inScope = !chipScope || chipScope.has(node.id);
+    const folderMatch = matchesFolderFilters(node.id);
+    let sz = 0, cnt = 0;
+    let extFilteredSize = 0;
+
+    for (const cell of cells) {
+      const cv = cellVal(cell);
+      const extMatch = matchesExtFilters(cell);
+      if (extMatch && folderMatch) { sz += cv; cnt += cell.count; }
+      // Ext chip sizes: filtered by folder (node-level) only
+      if (inScope && cell.ext !== null && folderMatch) {
+        CHIP_EXT_SIZES[cell.ext] = (CHIP_EXT_SIZES[cell.ext] || 0) + cv;
+      }
+      // Accumulate ext-filtered size for folder chip distribution
+      if (inScope && extMatch) {
+        extFilteredSize += cv;
+      }
+    }
+
+    // Distribute ext-filtered size to all path-part folder tags
+    if (inScope && extFilteredSize > 0) {
+      const parts = NODE_PATH_PARTS[node.id];
+      if (parts) {
+        for (const part of parts) {
+          if (FOLDER_TAG_SET.has(part)) {
+            CHIP_FOLDER_SIZES[part] = (CHIP_FOLDER_SIZES[part] || 0) + extFilteredSize;
+          }
+        }
+      }
+    }
+
+    directSizes[node.id] = sz;
+    TOTAL_FILES += cnt;
+  }
+
+  // 2. Bottom-up tree walk: recursive = direct + sum(children recursive)
+  for (const node of TREE_BOTTOM_UP) {
+    if (node.id.endsWith('/__rest__')) continue;
+    let recSize = directSizes[node.id] || 0;
+    const children = CHILDREN_MAP[node.id];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) {
+          recSize += RECURSIVE_SIZES[child.id] || 0;
+        }
+      }
+    }
+    RECURSIVE_SIZES[node.id] = recSize;
+  }
+
+  // 3. Rest node sizes = parent recursive - sum(non-rest children recursive)
+  for (const node of TREE) {
+    if (!node.id.endsWith('/__rest__')) continue;
+    const parentSize = RECURSIVE_SIZES[node.parent] || 0;
+    let childrenTotal = 0;
+    const siblings = CHILDREN_MAP[node.parent];
+    if (siblings) {
+      for (const c of siblings) {
+        if (!c.id.endsWith('/__rest__')) childrenTotal += RECURSIVE_SIZES[c.id] || 0;
+      }
+    }
+    RECURSIVE_SIZES[node.id] = Math.max(0, parentSize - childrenTotal);
+  }
+}
+
+function getNodeSize(node) {
+  return RECURSIVE_SIZES[node.id] || 0;
+}
+
+function hasAnyFilter() {
+  return STATE.selectedExts.size > 0 || STATE.excludedExts.size > 0
+    || STATE.selectedFolders.size > 0 || STATE.excludedFolders.size > 0;
+}
+
+// Gather all matching cells recursively from a node's subtree (for detail panel)
+function getRecursiveCells(nodeId) {
+  const result = [];
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const nid = stack.pop();
+    const folderMatch = matchesFolderFilters(nid);
+    const cells = CUBE_CELLS[nid];
+    if (cells && folderMatch) {
+      for (const cell of cells) {
+        if (matchesExtFilters(cell)) result.push(cell);
+      }
+    }
+    const children = CHILDREN_MAP[nid];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) stack.push(child.id);
+      }
+    }
+  }
+  return result;
+}
+
+// Gather example files recursively from a node's subtree
+function getRecursiveExamples(nodeId) {
+  const bins = Array.from({length: N_BINS}, () => []);
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const nid = stack.pop();
+    const ex = EXAMPLES_RAW[nid];
+    if (ex) {
+      for (let i = 0; i < N_BINS; i++) {
+        if (ex[i] && ex[i].length > 0) bins[i].push(...ex[i]);
+      }
+    }
+    const children = CHILDREN_MAP[nid];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) stack.push(child.id);
+      }
+    }
+  }
+  return bins;
+}
+
+// ============================================================
+// Indices
+// ============================================================
+function buildIndices() {
+  NODE_MAP = {};
+  CHILDREN_MAP = {};
+  NODE_PATH_PARTS = {};
+  for (const node of TREE) {
+    NODE_MAP[node.id] = node;
+    NODE_PATH_PARTS[node.id] = new Set(node.id.split('/').filter(Boolean));
+    if (node.parent) {
+      if (!CHILDREN_MAP[node.parent]) CHILDREN_MAP[node.parent] = [];
+      CHILDREN_MAP[node.parent].push(node);
+      node.depth = (NODE_MAP[node.parent].depth || 0) + 1;
+    } else {
+      node.depth = 0;
+    }
+  }
+  TREE_BOTTOM_UP = [...TREE].sort((a, b) =>
+    b.id.split('/').length - a.id.split('/').length
+  );
+}
+
+// ============================================================
+// Render
+// ============================================================
+function buildQueryCmd() {
+  const pathParts = window.location.pathname.split('/').filter(Boolean);
+  let feather = 'SCAN.feather';
+  if (pathParts.length >= 1) {
+    const scanDir = pathParts[pathParts.length - 1] === 'dashboard.html'
+      ? pathParts[pathParts.length - 2]
+      : pathParts[pathParts.length - 1];
+    if (scanDir) feather = scanDir + '.feather';
+  }
+
+  let cmd = `python query.py ${feather}`;
+
+  if (STATE.selectedNode) {
+    const under = STATE.selectedNode.endsWith('/') ? STATE.selectedNode : STATE.selectedNode + '/';
+    cmd += ` --under ${under}`;
+  }
+
+  for (const ext of STATE.selectedExts) {
+    cmd += ` --ext ${ext}`;
+  }
+
+  for (const folder of STATE.selectedFolders) {
+    cmd += ` --name ${folder}`;
+  }
+
+  cmd += ' --delete';
+  return cmd;
+}
+
+function updateCommandBar() {
+  document.getElementById('command-text').textContent = buildQueryCmd();
+}
+
+function renderChipsAndDetail() {
+  perfStart('recompute'); recomputeSizes(); perfEnd('recompute');
+  perfStart('stats'); renderStats(); perfEnd('stats');
+  perfStart('extChips'); renderExtChips(); perfEnd('extChips');
+  perfStart('folderChips'); renderFolderChips(); perfEnd('folderChips');
+  updateCommandBar();
+  perfStart('detail'); renderDetail(); perfEnd('detail');
+  stateToHash();
+  perfShow();
+}
+
+function renderAll() {
+  perfStart('total');
+  renderChipsAndDetail();
+  perfStart('treemap'); renderTreemap(); perfEnd('treemap');
+  perfEnd('total');
+  perfShow();
+}
+
+function renderStats() {
+  const root = TREE[0];
+  if (!root) return;
+  const totalSize = getNodeSize(root);
+  const parts = [];
+  if (STATE.selectedExts.size > 0)
+    parts.push(`ext: ${[...STATE.selectedExts].map(e => '.' + e).join(', ')}`);
+  if (STATE.excludedExts.size > 0)
+    parts.push(`-ext: ${STATE.excludedExts.size}`);
+  if (STATE.selectedFolders.size > 0)
+    parts.push(`folder: ${[...STATE.selectedFolders].join(', ')}`);
+  if (STATE.excludedFolders.size > 0)
+    parts.push(`-folder: ${STATE.excludedFolders.size}`);
+  const filterDesc = parts.join(' | ');
+  const modeLabel = STATE.sizeMode === 'count' ? 'files' : 'total';
+  document.getElementById('header-stats').innerHTML =
+    `<span><strong>${fmtVal(totalSize)}</strong> ${modeLabel}</span>` +
+    (filterDesc ? `<span style="color:var(--warning)">${filterDesc}</span>` : '') +
+    `<span><strong>${TOTAL_FILES.toLocaleString()}</strong> files</span>` +
+    `<span><strong>${TREE.length.toLocaleString()}</strong> folders</span>`;
+}
+
+function renderExtChips() {
+  const bar = document.getElementById('ext-bar');
+  let html = '<span class="label">Extensions:</span>';
+  const sorted = [...EXTENSIONS].sort((a, b) =>
+    (CHIP_EXT_SIZES[b.ext] || 0) - (CHIP_EXT_SIZES[a.ext] || 0)
+  );
+  const anyFilter = STATE.selectedFolders.size > 0 || STATE.excludedFolders.size > 0 || STATE.selectedNode;
+  const top = (anyFilter
+    ? sorted.filter(e => (CHIP_EXT_SIZES[e.ext] || 0) > 0)
+    : sorted
+  ).slice(0, 20);
+  // Ensure selected/excluded exts are always visible
+  const topSet = new Set(top.map(e => e.ext));
+  const pinned = sorted.filter(e =>
+    !topSet.has(e.ext) &&
+    (STATE.selectedExts.has(e.ext) || STATE.excludedExts.has(e.ext))
+  );
+  const visible = [...top, ...pinned];
+  for (const e of visible) {
+    const isActive = STATE.selectedExts.has(e.ext);
+    const isExcluded = STATE.excludedExts.has(e.ext);
+    const cls = isActive ? ' active' : isExcluded ? ' excluded' : '';
+    const display = e.ext === '(no ext)' ? '(no ext)' : '.' + e.ext;
+    const chipSize = CHIP_EXT_SIZES[e.ext] || 0;
+    html += `<span class="chip${cls}" data-ext="${e.ext}">
+      ${display} <span class="chip-size">${fmtVal(chipSize)}</span>
+    </span>`;
+  }
+  html += '<span class="hint">click = show only | right-click = exclude</span>';
+  html += '<button class="clear-btn" id="clear-ext">Clear</button>';
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.chip[data-ext]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const ext = chip.dataset.ext;
+      STATE.excludedExts.delete(ext);
+      if (STATE.selectedExts.has(ext)) {
+        STATE.selectedExts.delete(ext);
+      } else {
+        STATE.selectedExts.add(ext);
+      }
+      renderAll();
+    });
+    chip.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const ext = chip.dataset.ext;
+      STATE.selectedExts.delete(ext);
+      if (STATE.excludedExts.has(ext)) {
+        STATE.excludedExts.delete(ext);
+      } else {
+        STATE.excludedExts.add(ext);
+      }
+      renderAll();
+    });
+  });
+
+  document.getElementById('clear-ext').addEventListener('click', () => {
+    STATE.selectedExts.clear();
+    STATE.excludedExts.clear();
+    STATE.selectedFolders.clear();
+    STATE.excludedFolders.clear();
+    STATE.selectedNode = null;
+    treemapViewRoot = null;
+    renderAll();
+  });
+}
+
+function renderFolderChips() {
+  const bar = document.getElementById('folder-bar');
+  let html = '<span class="label">Folders:</span>';
+  const sorted = [...LEAF_FOLDERS].sort((a, b) =>
+    (CHIP_FOLDER_SIZES[b.leaf_folder] || 0) - (CHIP_FOLDER_SIZES[a.leaf_folder] || 0)
+  );
+  const anyFilter = STATE.selectedExts.size > 0 || STATE.excludedExts.size > 0 || STATE.selectedNode;
+  const top = (anyFilter
+    ? sorted.filter(f => (CHIP_FOLDER_SIZES[f.leaf_folder] || 0) > 0)
+    : sorted
+  ).slice(0, 20);
+  // Ensure selected/excluded folders are always visible
+  const topSet = new Set(top.map(f => f.leaf_folder));
+  const pinned = sorted.filter(f =>
+    !topSet.has(f.leaf_folder) &&
+    (STATE.selectedFolders.has(f.leaf_folder) || STATE.excludedFolders.has(f.leaf_folder))
+  );
+  const visible = [...top, ...pinned];
+  for (const f of visible) {
+    const isActive = STATE.selectedFolders.has(f.leaf_folder);
+    const isExcluded = STATE.excludedFolders.has(f.leaf_folder);
+    const cls = isActive ? ' active' : isExcluded ? ' excluded' : '';
+    const chipSize = CHIP_FOLDER_SIZES[f.leaf_folder] || 0;
+    html += `<span class="chip${cls}" data-folder="${f.leaf_folder}">
+      ${f.leaf_folder} <span class="chip-size">${fmtVal(chipSize)}</span>
+    </span>`;
+  }
+  html += '<span class="hint">click = include | right-click = exclude</span>';
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.chip[data-folder]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const f = chip.dataset.folder;
+      STATE.excludedFolders.delete(f);
+      if (STATE.selectedFolders.has(f)) {
+        STATE.selectedFolders.delete(f);
+      } else {
+        STATE.selectedFolders.add(f);
+      }
+      renderAll();
+    });
+    chip.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const f = chip.dataset.folder;
+      STATE.selectedFolders.delete(f);
+      if (STATE.excludedFolders.has(f)) {
+        STATE.excludedFolders.delete(f);
+      } else {
+        STATE.excludedFolders.add(f);
+      }
+      renderAll();
+    });
+  });
+}
+
+// Depth-limited treemap: only send nodes within VIEW_DEPTH levels of the
+// current view root to Plotly.  When the user drills near the data edge,
+// re-center and re-render with more data.
+const TREEMAP_VIEW_DEPTH = 4;   // data levels beyond view root (3 visible + 1 buffer)
+let treemapViewRoot = null;      // null = true root
+
+function renderTreemap() {
+  const root = TREE[0];
+  if (!root) return;
+
+  const badge = document.getElementById('treemap-badge');
+  if (hasAnyFilter()) {
+    const p = [];
+    if (STATE.selectedExts.size > 0) p.push([...STATE.selectedExts].map(e => '.' + e).join(', '));
+    if (STATE.selectedFolders.size > 0) p.push([...STATE.selectedFolders].join(', '));
+    if (STATE.excludedExts.size > 0) p.push('-' + [...STATE.excludedExts].map(e => '.' + e).join(', '));
+    if (STATE.excludedFolders.size > 0) p.push('-' + [...STATE.excludedFolders].join(', '));
+    badge.textContent = `filtered: ${p.join(' | ')}`;
+  } else {
+    badge.textContent = 'all';
+  }
+
+  // Determine view root and depth limits
+  const viewRoot = (treemapViewRoot && NODE_MAP[treemapViewRoot]) || root;
+  const maxDataDepth = viewRoot.depth + TREEMAP_VIEW_DEPTH;
+
+  const ids = [], labels = [], parents = [], values = [], text = [];
+  const rootSize = getNodeSize(root);
+  ids.push(root.id);
+  labels.push(root.name);
+  parents.push('');
+  values.push(rootSize);
+  text.push(fmtVal(rootSize));
+
+  const included = new Set([root.id]);
+
+  for (const node of TREE) {
+    if (node === root) continue;
+    const sz = getNodeSize(node);
+    if (sz <= 0) continue;
+    if (!included.has(node.parent)) continue;
+
+    // Include ancestors of viewRoot (for pathbar) + descendants within depth limit
+    if (node.depth > maxDataDepth && !viewRoot.id.startsWith(node.id + '/') && node.id !== viewRoot.id) continue;
+
+    ids.push(node.id);
+    labels.push(node.name);
+    parents.push(node.parent);
+    values.push(sz);
+    text.push(fmtVal(sz));
+    included.add(node.id);
+  }
+
+  const tmDiv = document.getElementById('treemap-chart');
+  Plotly.react(tmDiv, [{
+    type: 'treemap',
+    ids, labels, parents, values, text,
+    branchvalues: 'total',
+    hovertemplate: '<b>%{label}</b><br>%{text}<extra></extra>',
+    textinfo: 'label+text',
+    textposition: 'middle center',
+    textfont: { size: 12 },
+    pathbar: { textfont: { size: 14 } },
+    marker: { cornerradius: 4 },
+    tiling: { pad: 2 },
+    maxdepth: 3,
+    level: viewRoot.id,
+  }], {
+    ...PLOTLY_LAYOUT,
+    margin: { t: 30, b: 4, l: 4, r: 4 },
+  }, PLOTLY_CFG);
+
+  tmDiv.removeAllListeners?.('plotly_click');
+  tmDiv.on('plotly_click', (data) => {
+    if (!data.points || !data.points.length) return;
+    const clickedId = data.points[0].id;
+    // Defer off Plotly's call stack — calling Plotly.react() (in renderDetail)
+    // re-entrantly during a plotly_click handler hangs Safari's renderer.
+    setTimeout(() => {
+      STATE.selectedNode = clickedId;
+      treemapViewRoot = clickedId;
+      renderChipsAndDetail();
+
+      // If user drills near the data edge, re-center and re-render with more data
+      const clickedNode = NODE_MAP[clickedId];
+      if (clickedNode && clickedNode.depth >= maxDataDepth - 1) {
+        perfStart('treemap'); renderTreemap(); perfEnd('treemap');
+      }
+    }, 0);
+  });
+}
+
+function renderDetail() {
+  const panel = document.getElementById('detail-panel');
+  if (!STATE.selectedNode || !NODE_MAP[STATE.selectedNode]) {
+    panel.classList.remove('visible');
+    return;
+  }
+
+  const node = NODE_MAP[STATE.selectedNode];
+  panel.classList.add('visible');
+
+  document.getElementById('detail-name').textContent = node.name + ' \u2014 ' + fmtVal(getNodeSize(node));
+  document.getElementById('detail-path').textContent = node.id;
+
+  // Gather all matching cells recursively for this node
+  const cells = node.id.endsWith('/__rest__') ? [] : getRecursiveCells(node.id);
+
+  // Extension breakdown from filtered cells (skip null = "(other)" bucket)
+  const extMap = {};
+  for (const cell of cells) {
+    if (cell.ext !== null) {
+      extMap[cell.ext] = (extMap[cell.ext] || 0) + cellVal(cell);
+    }
+  }
+  const extEntries = Object.entries(extMap).sort((a, b) => b[1] - a[1]);
+
+  if (extEntries.length > 0) {
+    const colors = extEntries.map(([e]) =>
+      STATE.excludedExts.has(e) ? '#f8514966' : STATE.selectedExts.has(e) ? '#58a6ff' : '#3fb950'
+    );
+    Plotly.react('ext-breakdown-chart', [{
+      type: 'bar',
+      x: extEntries.map(([e]) => e === '(no ext)' ? '(no ext)' : '.' + e),
+      y: extEntries.map(([, s]) => s),
+      marker: { color: colors },
+      hovertemplate: extEntries.map(([e, s]) =>
+        `<b>${e === '(no ext)' ? '(no ext)' : '.' + e}</b><br>${fmtVal(s)}<extra></extra>`
+      ),
+    }], {
+      ...PLOTLY_LAYOUT,
+      margin: { t: 10, b: 40, l: 60, r: 20 },
+      yaxis: { title: STATE.sizeMode === 'count' ? 'File count' : 'Size (bytes)', gridcolor: '#21262d' },
+      xaxis: { tickangle: -45 },
+    }, PLOTLY_CFG);
+  } else {
+    Plotly.react('ext-breakdown-chart', [], {
+      ...PLOTLY_LAYOUT,
+      margin: { t: 10, b: 40, l: 60, r: 20 },
+      annotations: [{ text: 'No extension data', showarrow: false, font: { color: '#8b949e' } }],
+    }, PLOTLY_CFG);
+  }
+
+  // File size histogram from filtered cells
+  const binCounts = new Array(N_BINS).fill(0);
+  const binTotals = new Array(N_BINS).fill(0);
+  for (const cell of cells) {
+    binCounts[cell.bin] += cell.count;
+    binTotals[cell.bin] += cell.total;
+  }
+
+  // Examples (gathered recursively, not cross-filtered)
+  const examples = node.id.endsWith('/__rest__') ? Array.from({length: N_BINS}, () => [])
+    : getRecursiveExamples(node.id);
+
+  const listEl = document.getElementById('file-list');
+  const hasData = binCounts.some(c => c > 0);
+
+  if (hasData) {
+    const nonEmpty = [];
+    for (let i = 0; i < N_BINS; i++) {
+      if (binCounts[i] > 0) {
+        nonEmpty.push({
+          label: HIST_LABELS[i], i,
+          count: binCounts[i], total: binTotals[i],
+          examples: examples[i] || [],
+        });
+      }
+    }
+
+    Plotly.react('hist-chart', [{
+      type: 'bar',
+      x: nonEmpty.map(b => b.label),
+      y: nonEmpty.map(b => b.count),
+      marker: { color: '#58a6ff' },
+      hovertemplate: nonEmpty.map(b =>
+        `<b>${b.label}</b><br>${b.count.toLocaleString()} files<br>${fmtSize(b.total)} total<extra></extra>`
+      ),
+    }], {
+      ...PLOTLY_LAYOUT,
+      margin: { t: 10, b: 60, l: 60, r: 20 },
+      yaxis: { title: 'File count', gridcolor: '#21262d', type: 'log' },
+      xaxis: { tickangle: -45, title: 'File size' },
+    }, PLOTLY_CFG);
+
+    let html = '<table><tr><th>Bin</th><th>Example</th><th style="text-align:right">Size</th></tr>';
+    for (const b of nonEmpty) {
+      for (const ex of b.examples.slice(0, 2)) {
+        html += `<tr><td style="color:var(--text-muted);font-size:11px;">${b.label}</td>` +
+          `<td>${ex.name}</td><td class="size">${fmtSize(ex.size)}</td></tr>`;
+      }
+    }
+    html += '</table>';
+    listEl.innerHTML = html;
+  } else {
+    Plotly.react('hist-chart', [], {
+      ...PLOTLY_LAYOUT, margin: { t: 10, b: 40, l: 60, r: 20 },
+      annotations: [{ text: 'No file data', showarrow: false, font: { color: '#8b949e' } }],
+    }, PLOTLY_CFG);
+    listEl.innerHTML = '';
+  }
+}
+
+// ============================================================
+// Events
+// ============================================================
+document.getElementById('detail-close').addEventListener('click', () => {
+  STATE.selectedNode = null;
+  renderDetail();
+});
+
+document.getElementById('mode-switch').addEventListener('click', (ev) => {
+  const opt = ev.target.closest('.mode-opt');
+  if (!opt || opt.dataset.mode === STATE.sizeMode) return;
+  STATE.sizeMode = opt.dataset.mode;
+  document.querySelectorAll('#mode-switch .mode-opt').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === STATE.sizeMode);
+  });
+  renderAll();
+});
+
+document.getElementById('copy-cmd').addEventListener('click', () => {
+  const cmd = buildQueryCmd();
+  const btn = document.getElementById('copy-cmd');
+  navigator.clipboard.writeText(cmd).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+});
+
+// ============================================================
+// Boot
+// ============================================================
+async function boot() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('perf')) {
+    document.getElementById('perf-overlay').style.display = 'block';
+  }
+  const base = params.get('data') || window.location.href.replace(/\/[^/]*$/, '') + '/dashboard_data/';
+  const progress = document.getElementById('load-progress');
+
+  const bootStart = performance.now();
+
+  // Load hyparquet
+  progress.textContent = 'Loading hyparquet...';
+  perfStart('import');
+  const { parquetReadObjects, asyncBufferFromUrl } =
+    await import('https://cdn.jsdelivr.net/npm/hyparquet@1.25.1/+esm');
+  perfEnd('import');
+
+  // Fetch parquet files + meta.json in parallel
+  progress.textContent = 'Fetching data...';
+  perfStart('fetch');
+  const [treeFile, cubeFile, exFile, metaResp] = await Promise.all([
+    asyncBufferFromUrl({ url: base + 'tree.parquet' }),
+    asyncBufferFromUrl({ url: base + 'cube.parquet' }),
+    asyncBufferFromUrl({ url: base + 'examples.parquet' }),
+    fetch(base + 'meta.json'),
+  ]);
+  perfEnd('fetch');
+
+  // Parse parquet into JS objects
+  progress.textContent = 'Parsing data...';
+  perfStart('parse');
+
+  const [treeRows, cubeRows, exRows, meta] = await Promise.all([
+    parquetReadObjects({ file: treeFile }),
+    parquetReadObjects({ file: cubeFile }),
+    parquetReadObjects({ file: exFile }),
+    metaResp.json(),
+  ]);
+
+  // tree.parquet → TREE: [{id, parent, name, size}, ...]
+  TREE = treeRows.map(r => ({
+    id: r.node_id, parent: r.parent, name: r.name, size: Number(r.size),
+  }));
+
+  // meta.json
+  EXTENSIONS = meta.extensions;
+  LEAF_FOLDERS = meta.leaf_folders;
+  HIST_LABELS = meta.hist_labels;
+  FOLDER_TAG_SET = new Set(LEAF_FOLDERS.map(f => f.leaf_folder));
+
+  // cube.parquet → CUBE_CELLS: {nodeId: [{ext, folder, bin, count, total}, ...]}
+  CUBE_CELLS = {};
+  let totalCells = 0;
+  for (const r of cubeRows) {
+    const nid = r.node_id;
+    if (!CUBE_CELLS[nid]) CUBE_CELLS[nid] = [];
+    CUBE_CELLS[nid].push({
+      ext: r.ext, folder: r.leaf_folder,
+      bin: r.size_bin, count: Number(r.count), total: Number(r.total_size),
+    });
+    totalCells++;
+  }
+
+  // examples.parquet → EXAMPLES_RAW: {nodeId: [[{name, ext, size}, ...], ...12 bins]}
+  EXAMPLES_RAW = {};
+  for (const r of exRows) {
+    const nid = r.node_id;
+    if (!EXAMPLES_RAW[nid]) EXAMPLES_RAW[nid] = Array.from({length: N_BINS}, () => []);
+    EXAMPLES_RAW[nid][r.size_bin].push({
+      name: r.filename, ext: r.ext, size: Number(r.size),
+    });
+  }
+
+  perfEnd('parse');
+
+  progress.textContent = `Building indices for ${TREE.length} nodes...`;
+  await new Promise(r => setTimeout(r, 0));
+
+  perfStart('indices');
+  buildIndices();
+  perfEnd('indices');
+
+  console.log(`[perf] boot: import=${PERF.import.toFixed(0)}ms fetch=${PERF.fetch.toFixed(0)}ms parse=${PERF.parse.toFixed(0)}ms indices=${PERF.indices.toFixed(0)}ms`);
+  console.log(`[perf] data: ${TREE.length.toLocaleString()} nodes, ${totalCells.toLocaleString()} cube cells, ${Object.keys(EXAMPLES_RAW).length.toLocaleString()} example nodes`);
+
+  // Restore state from URL hash (shared links)
+  stateFromHash();
+  if (STATE.sizeMode !== 'size') {
+    document.querySelectorAll('#mode-switch .mode-opt').forEach(el => {
+      el.classList.toggle('active', el.dataset.mode === STATE.sizeMode);
+    });
+  }
+
+  document.getElementById('loading').classList.add('hidden');
+  renderAll();
+
+  console.log(`[perf] boot total: ${(performance.now() - bootStart).toFixed(0)}ms`);
+}
+
+boot();
+</script>
+</body>
+</html>

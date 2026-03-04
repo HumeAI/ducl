@@ -9,9 +9,16 @@ permissions:
   id-token: write
 
 jobs:
-  pypi:
-    runs-on: ubuntu-latest
-    environment: release
+  # --- Build one wheel per Linux architecture ---
+  wheels:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,14 +32,63 @@ jobs:
           sudo apt-get update && sudo apt-get install -y gcc make
           pip install build
 
-      - name: Build wheel and sdist
-        run: python -m build
+      - name: Build platform wheel
+        run: python -m build --wheel
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.arch }}
+          path: dist/*.whl
+
+  # --- Build sdist (architecture-independent, once) ---
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: pip install build
+
+      - name: Build sdist
+        run: python -m build --sdist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # --- Publish all wheels + sdist to PyPI ---
+  publish:
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
+  # --- Attach standalone pwalk2 binaries to GitHub release ---
   binary:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +98,10 @@ jobs:
       - name: Build pwalk2 binary
         run: make -C src/ducl/pwalk2 pwalk2
 
+      - name: Rename binary with arch suffix
+        run: cp src/ducl/pwalk2/pwalk2 pwalk2-linux-${{ matrix.arch }}
+
       - name: Upload pwalk2 binary to release
         uses: softprops/action-gh-release@v2
         with:
-          files: src/ducl/pwalk2/pwalk2
+          files: pwalk2-linux-${{ matrix.arch }}

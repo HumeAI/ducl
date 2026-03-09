@@ -67,17 +67,21 @@ def load_example_candidates(path: str | Path) -> pl.DataFrame:
 
 
 def detect_root(files_df: pl.DataFrame) -> tuple[str, int]:
-    """Detect root path from files -- shallowest directory by slash count.
+    """Detect root path from files -- longest common prefix of all paths.
 
     Returns (root_path, root_n_parts).
     """
-    min_nc = files_df["n_components"].min()
-    # Root path = prefix with fewest components from any file
-    sample_path = files_df.filter(pl.col("n_components") == min_nc)["path"][0]
-    # The root is the directory portion with min_nc - 1 components
-    parts = sample_path.split("/")
-    root_path = "/".join(parts[: min_nc - 1])
-    root_n_parts = len(root_path.split("/"))
+    # LCP of lexicographic min and max equals LCP of all paths
+    min_path = files_df["path"].min()
+    max_path = files_df["path"].max()
+    common: list[str] = []
+    for a, b in zip(min_path.split("/"), max_path.split("/")):
+        if a == b:
+            common.append(a)
+        else:
+            break
+    root_path = "/".join(common)
+    root_n_parts = len(common)
     return root_path, root_n_parts
 
 

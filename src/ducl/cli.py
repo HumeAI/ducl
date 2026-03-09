@@ -76,6 +76,16 @@ def update_cmd(dashboard_dir, subtree_feather):
 
 
 @cli.command()
+@click.argument("old_feather")
+@click.argument("new_feather")
+@click.option("-o", "--output", required=True, help="Output directory for diff dashboard")
+def diff(old_feather, new_feather, output):
+    """Compare two scan captures and build a diff dashboard."""
+    from .diff import diff as diff_build
+    diff_build(old_feather, new_feather, output)
+
+
+@cli.command()
 @click.argument("feather")
 @click.option("--under", help="Path prefix filter")
 @click.option("--name", help="Exact match on any path component")

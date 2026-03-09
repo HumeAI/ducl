@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disk Usage Diff</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --danger: #f85149;
+    --warning: #d29922;
+    --growth: #f85149;
+    --shrink: #3fb950;
+    --neutral: #8b949e;
+    --new-node: #58a6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; white-space: nowrap; }
+  .summary-cards {
+    display: flex; gap: 16px; margin-left: auto;
+    font-size: 14px; white-space: nowrap;
+  }
+  .summary-card {
+    padding: 4px 12px; border: 1px solid var(--border);
+    border-radius: 8px; text-align: center;
+  }
+  .summary-card .label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+  .summary-card .value { font-size: 16px; font-weight: 600; }
+  .summary-card .value.growth { color: var(--growth); }
+  .summary-card .value.shrink { color: var(--shrink); }
+  .summary-card .value.neutral { color: var(--text); }
+
+  .legend-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 24px;
+    display: flex; align-items: center; gap: 16px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .legend-dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 4px;
+  }
+
+  .controls-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 24px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .controls-bar .label {
+    font-size: 11px; color: var(--text-muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px;
+  }
+  .controls-bar .hint {
+    font-size: 11px; color: var(--text-muted); font-style: italic;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 12px; border-radius: 14px; font-size: 12px;
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text-muted);
+    transition: all 0.15s; user-select: none; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active {
+    background: rgba(88,166,255,0.2); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+  .chip.excluded {
+    background: rgba(248,81,73,0.15); border-color: var(--danger);
+    color: var(--danger); text-decoration: line-through;
+  }
+  .chip .chip-delta { font-size: 11px; font-weight: 600; }
+  .chip .chip-delta.growth { color: var(--growth); }
+  .chip .chip-delta.shrink { color: var(--shrink); }
+  .clear-btn {
+    padding: 3px 12px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted);
+    cursor: pointer; border-radius: 14px; font-size: 12px;
+    transition: all 0.15s; margin-left: auto;
+  }
+  .clear-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+  .main { padding: 16px 24px; display: flex; flex-direction: column; gap: 16px; }
+  .chart-container {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .chart-title {
+    font-size: 15px; font-weight: 600; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chart-title .badge {
+    font-size: 11px; background: var(--border); padding: 2px 8px;
+    border-radius: 10px; color: var(--text-muted); font-weight: 400;
+  }
+
+  .detail-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; display: none;
+  }
+  .detail-panel.visible { display: block; }
+  .detail-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  }
+  .detail-header h3 { font-size: 15px; font-weight: 600; }
+  .detail-header .path {
+    font-size: 12px; color: var(--text-muted);
+    font-family: monospace; word-break: break-all;
+  }
+  .detail-header .close-btn {
+    margin-left: auto; cursor: pointer; color: var(--text-muted);
+    font-size: 18px; padding: 0 4px;
+  }
+  .detail-header .close-btn:hover { color: var(--danger); }
+  .detail-cols { display: flex; gap: 16px; }
+  .detail-cols > div { flex: 1; }
+  .file-list { font-size: 13px; }
+  .file-list table { width: 100%; border-collapse: collapse; }
+  .file-list th {
+    text-align: left; font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--border);
+  }
+  .file-list td {
+    padding: 3px 8px; border-bottom: 1px solid rgba(48,54,61,0.5);
+    font-family: monospace; font-size: 12px;
+  }
+  .file-list td.size { text-align: right; color: var(--accent); }
+
+  .top-changes {
+    display: flex; gap: 16px;
+  }
+  .top-changes > div { flex: 1; }
+  .top-changes h4 {
+    font-size: 13px; font-weight: 600; margin-bottom: 8px;
+    padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  .top-changes h4.growers { color: var(--growth); }
+  .top-changes h4.shrinkers { color: var(--shrink); }
+  .top-changes table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .top-changes th {
+    text-align: left; font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; padding: 3px 6px;
+  }
+  .top-changes td {
+    padding: 3px 6px; border-bottom: 1px solid rgba(48,54,61,0.3);
+    font-family: monospace; cursor: pointer;
+  }
+  .top-changes td:hover { color: var(--accent); }
+  .top-changes td.delta-growth { color: var(--growth); text-align: right; }
+  .top-changes td.delta-shrink { color: var(--shrink); text-align: right; }
+
+  .loading {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; font-size: 18px; color: var(--text-muted);
+    flex-direction: column; gap: 8px;
+  }
+  .loading.hidden { display: none; }
+  .loading .progress { font-size: 14px; }
+
+  .js-plotly-plot .plotly .modebar { top: 4px !important; right: 4px !important; }
+</style>
+</head>
+<body>
+
+<div class="loading" id="loading">
+  <div>Loading diff data...</div>
+  <div class="progress" id="load-progress"></div>
+</div>
+
+<header>
+  <h1>Disk Usage Diff</h1>
+  <div class="summary-cards" id="summary-cards"></div>
+</header>
+
+<div class="legend-bar">
+  <span><span class="legend-dot" style="background:var(--growth)"></span>Growth (disk increase)</span>
+  <span><span class="legend-dot" style="background:var(--shrink)"></span>Shrinkage (disk decrease)</span>
+  <span><span class="legend-dot" style="background:var(--new-node)"></span>New</span>
+  <span><span class="legend-dot" style="background:var(--neutral)"></span>No change</span>
+</div>
+
+<div class="controls-bar" id="ext-bar">
+  <span class="label">Extensions:</span>
+</div>
+
+<div class="controls-bar" id="folder-bar">
+  <span class="label">Folders:</span>
+</div>
+
+<div class="main">
+  <div class="chart-container">
+    <div class="chart-title">
+      Folder Treemap — Sized by |Delta|
+      <span class="badge" id="treemap-badge">all extensions</span>
+      <span class="badge" style="font-style:italic;">colored by % change · sized by churn</span>
+    </div>
+    <div id="treemap-chart" style="height:70vh;"></div>
+  </div>
+
+  <div class="chart-container">
+    <div class="chart-title">Top Changes</div>
+    <div class="top-changes" id="top-changes"></div>
+  </div>
+
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-header">
+      <div>
+        <h3 id="detail-name"></h3>
+        <div class="path" id="detail-path"></div>
+      </div>
+      <span class="close-btn" id="detail-close">&times;</span>
+    </div>
+    <div class="detail-cols">
+      <div>
+        <div id="ext-breakdown-chart" style="height:220px;"></div>
+        <div id="hist-chart" style="height:220px;margin-top:8px;"></div>
+      </div>
+      <div class="file-list" id="file-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const STATE = {
+  selectedExts: new Set(),
+  excludedExts: new Set(),
+  selectedFolders: new Set(),
+  excludedFolders: new Set(),
+  selectedNode: null,
+};
+
+let TREE = [];
+let EXTENSIONS = [];
+let LEAF_FOLDERS = [];
+let HIST_LABELS = [];
+let SUMMARY = {};
+let CUBE_CELLS = {};
+let EXAMPLES_RAW = {};
+let RECURSIVE_SIZES = {};       // new_size based (for detail/chips)
+let RECURSIVE_DELTAS = {};      // signed delta (for detail)
+let RECURSIVE_ABS_DELTAS = {};  // |delta| churn (for treemap sizing)
+let CHIP_EXT_DELTAS = {};       // ext → filtered delta within scope
+let CHIP_FOLDER_DELTAS = {};    // folder → filtered delta within scope
+let NODE_MAP = {};
+let CHILDREN_MAP = {};
+let NODE_PATH_PARTS = {};
+let FOLDER_TAG_SET = new Set();
+let TREE_BOTTOM_UP = [];
+
+// ============================================================
+// URL hash state (for shareable links)
+// ============================================================
+let _hashTimer = 0;
+let _lastHash = '';
+function stateToHash() {
+  clearTimeout(_hashTimer);
+  _hashTimer = setTimeout(() => {
+    const p = new URLSearchParams();
+    if (STATE.selectedExts.size > 0) p.set('ext', [...STATE.selectedExts].join(','));
+    if (STATE.excludedExts.size > 0) p.set('-ext', [...STATE.excludedExts].join(','));
+    if (STATE.selectedFolders.size > 0) p.set('folder', [...STATE.selectedFolders].join(','));
+    if (STATE.excludedFolders.size > 0) p.set('-folder', [...STATE.excludedFolders].join(','));
+    if (STATE.selectedNode) p.set('node', STATE.selectedNode);
+    if (treemapViewRoot) p.set('view', treemapViewRoot);
+    const h = p.toString();
+    const target = h ? '#' + h : window.location.pathname + window.location.search;
+    if (target === _lastHash) return;
+    _lastHash = target;
+    try { history.replaceState(null, '', target); } catch (_) {}
+  }, 400);
+}
+
+function stateFromHash() {
+  const raw = window.location.hash.slice(1);
+  if (!raw) return;
+  const p = new URLSearchParams(raw);
+  if (p.has('ext')) for (const e of p.get('ext').split(',')) if (e) STATE.selectedExts.add(e);
+  if (p.has('-ext')) for (const e of p.get('-ext').split(',')) if (e) STATE.excludedExts.add(e);
+  if (p.has('folder')) for (const f of p.get('folder').split(',')) if (f) STATE.selectedFolders.add(f);
+  if (p.has('-folder')) for (const f of p.get('-folder').split(',')) if (f) STATE.excludedFolders.add(f);
+  if (p.has('node')) STATE.selectedNode = p.get('node');
+  if (p.has('view')) treemapViewRoot = p.get('view');
+}
+
+const N_BINS = 12;
+const PLOTLY_LAYOUT = {
+  paper_bgcolor: '#161b22', plot_bgcolor: '#161b22',
+  font: { color: '#e6edf3', size: 12 },
+  margin: { t: 30, b: 4, l: 4, r: 4 },
+};
+const PLOTLY_CFG = { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d'] };
+
+// ============================================================
+// Utilities
+// ============================================================
+function fmtSize(bytes) {
+  if (bytes == null || bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let i = 0, v = Math.abs(bytes);
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (bytes < 0 ? '-' : '') + v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+function fmtDelta(bytes) {
+  if (bytes === 0) return '0 B';
+  const sign = bytes > 0 ? '+' : '';
+  return sign + fmtSize(bytes);
+}
+
+function fmtPct(pct) {
+  if (!isFinite(pct)) return 'new';
+  if (pct === 0) return '0%';
+  const sign = pct > 0 ? '+' : '';
+  return sign + pct.toFixed(1) + '%';
+}
+
+function deltaClass(val) {
+  if (val > 0) return 'growth';
+  if (val < 0) return 'shrink';
+  return 'neutral';
+}
+
+// Diverging color: red for growth, green for shrinkage (absolute delta scale)
+function deltaToColor(delta, maxAbsDelta) {
+  if (!isFinite(delta) || maxAbsDelta <= 0) return '#8b8b8e';
+  const t = Math.min(1, Math.abs(delta) / maxAbsDelta);
+  if (delta > 0) {
+    // red growth
+    const r = Math.round(139 + t * 109);
+    const g = Math.round(139 - t * 58);
+    const b = Math.round(142 - t * 69);
+    return `rgb(${r},${g},${b})`;
+  } else if (delta < 0) {
+    // green shrinkage
+    const r = Math.round(139 - t * 76);
+    const g = Math.round(139 + t * 46);
+    const b = Math.round(142 - t * 62);
+    return `rgb(${r},${g},${b})`;
+  }
+  return 'rgb(139,149,158)';  // neutral gray
+}
+
+// ============================================================
+// Cross-filtering
+// ============================================================
+function matchesExtFilters(cell) {
+  if (STATE.selectedExts.size > 0) {
+    if (cell.ext === null || !STATE.selectedExts.has(cell.ext)) return false;
+  }
+  if (STATE.excludedExts.size > 0) {
+    if (cell.ext !== null && STATE.excludedExts.has(cell.ext)) return false;
+  }
+  return true;
+}
+
+function matchesFolderFilter(nodeId, cell) {
+  if (STATE.selectedFolders.size === 0 && STATE.excludedFolders.size === 0) return true;
+  const parts = NODE_PATH_PARTS[nodeId];
+  if (STATE.selectedFolders.size > 0) {
+    for (const f of STATE.selectedFolders) {
+      if (parts.has(f) || cell.folder === f) return true;
+    }
+    return false;
+  }
+  if (STATE.excludedFolders.size > 0) {
+    for (const f of STATE.excludedFolders) {
+      if (parts.has(f) || cell.folder === f) return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+function recomputeSizes() {
+  RECURSIVE_SIZES = {};
+  RECURSIVE_DELTAS = {};
+  RECURSIVE_ABS_DELTAS = {};
+  CHIP_EXT_DELTAS = {};
+  CHIP_FOLDER_DELTAS = {};
+
+  // Pre-compute subtree scope for chip accumulation
+  let chipScope = null;
+  if (STATE.selectedNode && NODE_MAP[STATE.selectedNode]) {
+    chipScope = new Set();
+    const stack = [STATE.selectedNode];
+    while (stack.length > 0) {
+      const nid = stack.pop();
+      chipScope.add(nid);
+      const ch = CHILDREN_MAP[nid];
+      if (ch) for (const c of ch) if (!c.id.endsWith('/__rest__')) stack.push(c.id);
+    }
+  }
+
+  const directNewSizes = {};
+  const directOldSizes = {};
+  const directAbsDeltas = {};  // sum of |cell delta| per node
+
+  for (const node of TREE) {
+    if (node.id.endsWith('/__rest__')) continue;
+    const cells = CUBE_CELLS[node.id];
+    if (!cells) {
+      directNewSizes[node.id] = 0;
+      directOldSizes[node.id] = 0;
+      directAbsDeltas[node.id] = 0;
+      continue;
+    }
+
+    const inScope = !chipScope || chipScope.has(node.id);
+    let newSz = 0, oldSz = 0, absD = 0;
+
+    const nodeParts = NODE_PATH_PARTS[node.id];
+    for (const cell of cells) {
+      const extMatch = matchesExtFilters(cell);
+      const folderMatch = matchesFolderFilter(node.id, cell);
+      if (extMatch && folderMatch) {
+        newSz += cell.new_total;
+        oldSz += cell.old_total;
+        absD += Math.abs(cell.delta_total);
+      }
+      // Ext chip deltas: cross-filtered by folder, scoped to selected subtree
+      if (inScope && cell.ext !== null && folderMatch) {
+        CHIP_EXT_DELTAS[cell.ext] = (CHIP_EXT_DELTAS[cell.ext] || 0) + cell.delta_total;
+      }
+      // Folder chip deltas: accumulate for every matching folder tag in node path
+      if (inScope && extMatch) {
+        for (const part of nodeParts) {
+          if (FOLDER_TAG_SET.has(part)) {
+            CHIP_FOLDER_DELTAS[part] = (CHIP_FOLDER_DELTAS[part] || 0) + cell.delta_total;
+          }
+        }
+        if (cell.folder !== null && !nodeParts.has(cell.folder) && FOLDER_TAG_SET.has(cell.folder)) {
+          CHIP_FOLDER_DELTAS[cell.folder] = (CHIP_FOLDER_DELTAS[cell.folder] || 0) + cell.delta_total;
+        }
+      }
+    }
+
+    directNewSizes[node.id] = newSz;
+    directOldSizes[node.id] = oldSz;
+    directAbsDeltas[node.id] = absD;
+  }
+
+  // Bottom-up walk
+  for (const node of TREE_BOTTOM_UP) {
+    if (node.id.endsWith('/__rest__')) continue;
+    let recNew = directNewSizes[node.id] || 0;
+    let recOld = directOldSizes[node.id] || 0;
+    let recAbs = directAbsDeltas[node.id] || 0;
+    const children = CHILDREN_MAP[node.id];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) {
+          recNew += RECURSIVE_SIZES[child.id] || 0;
+          recOld += (RECURSIVE_DELTAS[child.id] != null
+            ? (RECURSIVE_SIZES[child.id] || 0) - RECURSIVE_DELTAS[child.id]
+            : 0);
+          recAbs += RECURSIVE_ABS_DELTAS[child.id] || 0;
+        }
+      }
+    }
+    RECURSIVE_SIZES[node.id] = recNew;
+    RECURSIVE_DELTAS[node.id] = recNew - recOld;
+    RECURSIVE_ABS_DELTAS[node.id] = recAbs;
+  }
+
+  // Rest nodes
+  for (const node of TREE) {
+    if (!node.id.endsWith('/__rest__')) continue;
+    const parentNew = RECURSIVE_SIZES[node.parent] || 0;
+    const parentAbs = RECURSIVE_ABS_DELTAS[node.parent] || 0;
+    let childrenNew = 0, childrenAbs = 0;
+    const siblings = CHILDREN_MAP[node.parent];
+    if (siblings) {
+      for (const c of siblings) {
+        if (!c.id.endsWith('/__rest__')) {
+          childrenNew += RECURSIVE_SIZES[c.id] || 0;
+          childrenAbs += RECURSIVE_ABS_DELTAS[c.id] || 0;
+        }
+      }
+    }
+    RECURSIVE_SIZES[node.id] = Math.max(0, parentNew - childrenNew);
+    RECURSIVE_ABS_DELTAS[node.id] = Math.max(0, parentAbs - childrenAbs);
+  }
+}
+
+// ============================================================
+// Indices
+// ============================================================
+function buildIndices() {
+  NODE_MAP = {};
+  CHILDREN_MAP = {};
+  NODE_PATH_PARTS = {};
+  for (const node of TREE) {
+    NODE_MAP[node.id] = node;
+    NODE_PATH_PARTS[node.id] = new Set(node.id.split('/').filter(Boolean));
+    if (node.parent) {
+      if (!CHILDREN_MAP[node.parent]) CHILDREN_MAP[node.parent] = [];
+      CHILDREN_MAP[node.parent].push(node);
+      node.depth = (NODE_MAP[node.parent].depth || 0) + 1;
+    } else {
+      node.depth = 0;
+    }
+  }
+  TREE_BOTTOM_UP = [...TREE].sort((a, b) =>
+    b.id.split('/').length - a.id.split('/').length
+  );
+}
+
+// ============================================================
+// Render
+// ============================================================
+function renderAll() {
+  recomputeSizes();
+  renderSummaryCards();
+  renderExtChips();
+  renderFolderChips();
+  renderTreemap();
+  renderTopChanges();
+  renderDetail();
+  stateToHash();
+}
+
+function renderSummaryCards() {
+  const el = document.getElementById('summary-cards');
+  const delta = SUMMARY.delta;
+  const pct = SUMMARY.old_total !== 0 ? (delta / SUMMARY.old_total * 100) : 0;
+  el.innerHTML = `
+    <div class="summary-card"><div class="label">Old Total</div><div class="value neutral">${fmtSize(SUMMARY.old_total)}</div></div>
+    <div class="summary-card"><div class="label">New Total</div><div class="value neutral">${fmtSize(SUMMARY.new_total)}</div></div>
+    <div class="summary-card"><div class="label">Delta</div><div class="value ${deltaClass(delta)}">${fmtDelta(delta)}</div></div>
+    <div class="summary-card"><div class="label">% Change</div><div class="value ${deltaClass(delta)}">${fmtPct(pct)}</div></div>
+  `;
+}
+
+function renderExtChips() {
+  const bar = document.getElementById('ext-bar');
+  let html = '<span class="label">Extensions:</span>';
+
+  // Use scoped deltas if a node is selected, otherwise global
+  const hasScope = STATE.selectedNode && NODE_MAP[STATE.selectedNode];
+  const sorted = [...EXTENSIONS].sort((a, b) => {
+    const da = hasScope ? Math.abs(CHIP_EXT_DELTAS[a.ext] || 0) : Math.abs(a.delta_total_size);
+    const db = hasScope ? Math.abs(CHIP_EXT_DELTAS[b.ext] || 0) : Math.abs(b.delta_total_size);
+    return db - da;
+  });
+
+  const visible = hasScope
+    ? sorted.filter(e => (CHIP_EXT_DELTAS[e.ext] || 0) !== 0).slice(0, 20)
+    : sorted.slice(0, 20);
+  // Ensure selected/excluded are always visible
+  const visibleSet = new Set(visible.map(e => e.ext));
+  const pinned = sorted.filter(e =>
+    !visibleSet.has(e.ext) &&
+    (STATE.selectedExts.has(e.ext) || STATE.excludedExts.has(e.ext))
+  );
+  const allVisible = [...visible, ...pinned];
+
+  for (const e of allVisible) {
+    const isActive = STATE.selectedExts.has(e.ext);
+    const isExcluded = STATE.excludedExts.has(e.ext);
+    const cls = isActive ? ' active' : isExcluded ? ' excluded' : '';
+    const display = e.ext === '(no ext)' ? '(no ext)' : '.' + e.ext;
+    const delta = hasScope ? (CHIP_EXT_DELTAS[e.ext] || 0) : e.delta_total_size;
+    const dCls = deltaClass(delta);
+    html += `<span class="chip${cls}" data-ext="${e.ext}">
+      ${display} <span class="chip-delta ${dCls}">${fmtDelta(delta)}</span>
+    </span>`;
+  }
+  html += '<span class="hint">click = show only | right-click = exclude</span>';
+  html += '<button class="clear-btn" id="clear-ext">Clear</button>';
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.chip[data-ext]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const ext = chip.dataset.ext;
+      STATE.excludedExts.delete(ext);
+      if (STATE.selectedExts.has(ext)) STATE.selectedExts.delete(ext);
+      else STATE.selectedExts.add(ext);
+      renderAll();
+    });
+    chip.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const ext = chip.dataset.ext;
+      STATE.selectedExts.delete(ext);
+      if (STATE.excludedExts.has(ext)) STATE.excludedExts.delete(ext);
+      else STATE.excludedExts.add(ext);
+      renderAll();
+    });
+  });
+
+  document.getElementById('clear-ext').addEventListener('click', () => {
+    STATE.selectedExts.clear();
+    STATE.excludedExts.clear();
+    STATE.selectedFolders.clear();
+    STATE.excludedFolders.clear();
+    STATE.selectedNode = null;
+    renderAll();
+  });
+}
+
+function renderFolderChips() {
+  const bar = document.getElementById('folder-bar');
+  let html = '<span class="label">Folders:</span>';
+
+  const hasScope = STATE.selectedNode && NODE_MAP[STATE.selectedNode];
+  const sorted = [...LEAF_FOLDERS].sort((a, b) => {
+    const da = hasScope ? Math.abs(CHIP_FOLDER_DELTAS[a.leaf_folder] || 0) : Math.abs(a.delta_total_size);
+    const db = hasScope ? Math.abs(CHIP_FOLDER_DELTAS[b.leaf_folder] || 0) : Math.abs(b.delta_total_size);
+    return db - da;
+  });
+
+  const visible = hasScope
+    ? sorted.filter(f => (CHIP_FOLDER_DELTAS[f.leaf_folder] || 0) !== 0).slice(0, 20)
+    : sorted.slice(0, 20);
+  const visibleSet = new Set(visible.map(f => f.leaf_folder));
+  const pinned = sorted.filter(f =>
+    !visibleSet.has(f.leaf_folder) &&
+    (STATE.selectedFolders.has(f.leaf_folder) || STATE.excludedFolders.has(f.leaf_folder))
+  );
+  const allVisible = [...visible, ...pinned];
+
+  for (const f of allVisible) {
+    const isActive = STATE.selectedFolders.has(f.leaf_folder);
+    const isExcluded = STATE.excludedFolders.has(f.leaf_folder);
+    const cls = isActive ? ' active' : isExcluded ? ' excluded' : '';
+    const delta = hasScope ? (CHIP_FOLDER_DELTAS[f.leaf_folder] || 0) : f.delta_total_size;
+    const dCls = deltaClass(delta);
+    html += `<span class="chip${cls}" data-folder="${f.leaf_folder}">
+      ${f.leaf_folder} <span class="chip-delta ${dCls}">${fmtDelta(delta)}</span>
+    </span>`;
+  }
+  html += '<span class="hint">click = include | right-click = exclude</span>';
+  bar.innerHTML = html;
+
+  bar.querySelectorAll('.chip[data-folder]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const f = chip.dataset.folder;
+      STATE.excludedFolders.delete(f);
+      if (STATE.selectedFolders.has(f)) STATE.selectedFolders.delete(f);
+      else STATE.selectedFolders.add(f);
+      renderAll();
+    });
+    chip.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const f = chip.dataset.folder;
+      STATE.selectedFolders.delete(f);
+      if (STATE.excludedFolders.has(f)) STATE.excludedFolders.delete(f);
+      else STATE.excludedFolders.add(f);
+      renderAll();
+    });
+  });
+}
+
+const TREEMAP_VIEW_DEPTH = 4;
+let treemapViewRoot = null;
+
+function renderTreemap() {
+  const root = TREE[0];
+  if (!root) return;
+
+  const badge = document.getElementById('treemap-badge');
+  badge.textContent = STATE.selectedExts.size > 0 || STATE.excludedExts.size > 0
+    ? 'filtered' : 'all extensions';
+
+  const viewRoot = (treemapViewRoot && NODE_MAP[treemapViewRoot]) || root;
+  const maxDataDepth = viewRoot.depth + TREEMAP_VIEW_DEPTH;
+
+  const ids = [], labels = [], parents = [], values = [], text = [], colors = [];
+  const rootAbsDelta = RECURSIVE_ABS_DELTAS[root.id] || 0;
+
+  // If there are no deltas at all, nothing to show
+  if (rootAbsDelta <= 0) {
+    const tmDiv = document.getElementById('treemap-chart');
+    Plotly.react(tmDiv, [], {
+      ...PLOTLY_LAYOUT, margin: { t: 30, b: 4, l: 4, r: 4 },
+      annotations: [{ text: 'No changes detected', showarrow: false, font: { color: '#8b949e', size: 16 } }],
+    }, PLOTLY_CFG);
+    return;
+  }
+
+  // Collect visible nodes first to find max absolute delta for color scaling
+  const visibleNodes = [root];
+  const included = new Set([root.id]);
+
+  for (const node of TREE) {
+    if (node === root) continue;
+    const absDelta = RECURSIVE_ABS_DELTAS[node.id] || 0;
+    if (absDelta <= 0) continue;
+    if (!included.has(node.parent)) continue;
+    if (node.depth > maxDataDepth && !viewRoot.id.startsWith(node.id + '/') && node.id !== viewRoot.id) continue;
+    visibleNodes.push(node);
+    included.add(node.id);
+  }
+
+  // Max absolute delta among visible nodes (for color normalization)
+  let maxAbsDelta = 0;
+  for (const node of visibleNodes) {
+    const d = Math.abs(RECURSIVE_DELTAS[node.id] || 0);
+    if (d > maxAbsDelta) maxAbsDelta = d;
+  }
+
+  for (const node of visibleNodes) {
+    const absDelta = RECURSIVE_ABS_DELTAS[node.id] || 0;
+    const delta = RECURSIVE_DELTAS[node.id] || 0;
+    ids.push(node.id);
+    labels.push(node.name);
+    parents.push(node === root ? '' : node.parent);
+    values.push(absDelta);
+    text.push(fmtDelta(delta));
+    colors.push(deltaToColor(delta, maxAbsDelta));
+  }
+
+  const tmDiv = document.getElementById('treemap-chart');
+  Plotly.react(tmDiv, [{
+    type: 'treemap',
+    ids, labels, parents, values, text,
+    branchvalues: 'total',
+    hovertemplate: ids.map(id => {
+      const n = NODE_MAP[id];
+      if (!n) return '<b>%{label}</b><extra></extra>';
+      return `<b>%{label}</b><br>Old: ${fmtSize(n.old_size)}<br>New: ${fmtSize(n.new_size)}<br>Delta: ${fmtDelta(n.delta)}<extra></extra>`;
+    }),
+    textinfo: 'label+text',
+    textposition: 'middle center',
+    textfont: { size: 12 },
+    pathbar: { textfont: { size: 14 } },
+    marker: { colors, cornerradius: 4 },
+    tiling: { pad: 2 },
+    maxdepth: 3,
+    level: viewRoot.id,
+  }], {
+    ...PLOTLY_LAYOUT,
+    margin: { t: 30, b: 4, l: 4, r: 4 },
+  }, PLOTLY_CFG);
+
+  tmDiv.removeAllListeners?.('plotly_click');
+  tmDiv.on('plotly_click', (data) => {
+    if (!data.points || !data.points.length) return;
+    const clickedId = data.points[0].id;
+    setTimeout(() => {
+      STATE.selectedNode = clickedId;
+      treemapViewRoot = clickedId;
+      renderAll();
+    }, 0);
+  });
+}
+
+function renderTopChanges() {
+  const el = document.getElementById('top-changes');
+  // Sort non-rest nodes by delta
+  const nonRest = TREE.filter(n => !n.id.endsWith('/__rest__') && n.parent !== '');
+  const growers = [...nonRest].filter(n => n.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 10);
+  const shrinkers = [...nonRest].filter(n => n.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 10);
+
+  function makeTable(items, isGrowth) {
+    if (items.length === 0) return '<em style="color:var(--text-muted);font-size:12px;">None</em>';
+    let html = '<table><tr><th>Path</th><th>Old</th><th>New</th><th style="text-align:right">Delta</th></tr>';
+    for (const n of items) {
+      const cls = isGrowth ? 'delta-growth' : 'delta-shrink';
+      html += `<tr data-node="${n.id}">
+        <td>${n.name}</td>
+        <td>${fmtSize(n.old_size)}</td>
+        <td>${fmtSize(n.new_size)}</td>
+        <td class="${cls}">${fmtDelta(n.delta)}</td>
+      </tr>`;
+    }
+    html += '</table>';
+    return html;
+  }
+
+  el.innerHTML = `
+    <div>
+      <h4 class="growers">Top Growers</h4>
+      ${makeTable(growers, true)}
+    </div>
+    <div>
+      <h4 class="shrinkers">Top Shrinkers</h4>
+      ${makeTable(shrinkers, false)}
+    </div>
+  `;
+
+  // Click to select node
+  el.querySelectorAll('tr[data-node]').forEach(row => {
+    row.addEventListener('click', () => {
+      STATE.selectedNode = row.dataset.node;
+      renderDetail();
+    });
+  });
+}
+
+function getRecursiveCells(nodeId) {
+  const result = [];
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const nid = stack.pop();
+    const cells = CUBE_CELLS[nid];
+    if (cells) {
+      for (const cell of cells) {
+        if (matchesExtFilters(cell) && matchesFolderFilter(nid, cell)) result.push(cell);
+      }
+    }
+    const children = CHILDREN_MAP[nid];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) stack.push(child.id);
+      }
+    }
+  }
+  return result;
+}
+
+function getRecursiveExamples(nodeId) {
+  const bins = Array.from({length: N_BINS}, () => []);
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const nid = stack.pop();
+    const ex = EXAMPLES_RAW[nid];
+    if (ex) {
+      for (let i = 0; i < N_BINS; i++) {
+        if (ex[i] && ex[i].length > 0) bins[i].push(...ex[i]);
+      }
+    }
+    const children = CHILDREN_MAP[nid];
+    if (children) {
+      for (const child of children) {
+        if (!child.id.endsWith('/__rest__')) stack.push(child.id);
+      }
+    }
+  }
+  return bins;
+}
+
+function renderDetail() {
+  const panel = document.getElementById('detail-panel');
+  if (!STATE.selectedNode || !NODE_MAP[STATE.selectedNode]) {
+    panel.classList.remove('visible');
+    return;
+  }
+
+  const node = NODE_MAP[STATE.selectedNode];
+  panel.classList.add('visible');
+
+  const deltaStr = fmtDelta(node.delta);
+  const pctStr = fmtPct(node.pct_change);
+  document.getElementById('detail-name').innerHTML =
+    `${node.name} &mdash; ${fmtSize(node.new_size)} <span style="color:var(--${deltaClass(node.delta)})">(${deltaStr}, ${pctStr})</span>`;
+  document.getElementById('detail-path').textContent = node.id;
+
+  // Gather cells recursively
+  const cells = node.id.endsWith('/__rest__') ? [] : getRecursiveCells(node.id);
+
+  // Extension breakdown: grouped bars old=gray, new=blue
+  const extOld = {}, extNew = {};
+  for (const cell of cells) {
+    if (cell.ext !== null) {
+      extOld[cell.ext] = (extOld[cell.ext] || 0) + cell.old_total;
+      extNew[cell.ext] = (extNew[cell.ext] || 0) + cell.new_total;
+    }
+  }
+  const allExts = [...new Set([...Object.keys(extOld), ...Object.keys(extNew)])];
+  allExts.sort((a, b) => (extNew[b] || 0) - (extNew[a] || 0));
+
+  if (allExts.length > 0) {
+    const extLabels = allExts.map(e => e === '(no ext)' ? '(no ext)' : '.' + e);
+    Plotly.react('ext-breakdown-chart', [
+      {
+        type: 'bar', name: 'Old',
+        x: extLabels, y: allExts.map(e => extOld[e] || 0),
+        marker: { color: 'rgba(139,149,158,0.4)' },
+      },
+      {
+        type: 'bar', name: 'New',
+        x: extLabels, y: allExts.map(e => extNew[e] || 0),
+        marker: { color: '#58a6ff' },
+      },
+    ], {
+      ...PLOTLY_LAYOUT, barmode: 'group',
+      margin: { t: 10, b: 40, l: 60, r: 20 },
+      yaxis: { title: 'Size (bytes)', gridcolor: '#21262d' },
+      xaxis: { tickangle: -45 },
+      legend: { x: 0.7, y: 1, font: { size: 11 } },
+    }, PLOTLY_CFG);
+  } else {
+    Plotly.react('ext-breakdown-chart', [], {
+      ...PLOTLY_LAYOUT, margin: { t: 10, b: 40, l: 60, r: 20 },
+      annotations: [{ text: 'No extension data', showarrow: false, font: { color: '#8b949e' } }],
+    }, PLOTLY_CFG);
+  }
+
+  // Histogram: overlaid old (gray) + new (blue)
+  const oldBins = new Array(N_BINS).fill(0);
+  const newBins = new Array(N_BINS).fill(0);
+  for (const cell of cells) {
+    oldBins[cell.bin] += cell.old_count;
+    newBins[cell.bin] += cell.new_count;
+  }
+
+  const nonEmpty = [];
+  for (let i = 0; i < N_BINS; i++) {
+    if (oldBins[i] > 0 || newBins[i] > 0) {
+      nonEmpty.push({ label: HIST_LABELS[i], i, oldCount: oldBins[i], newCount: newBins[i] });
+    }
+  }
+
+  // Examples (from new capture only)
+  const examples = node.id.endsWith('/__rest__') ? Array.from({length: N_BINS}, () => [])
+    : getRecursiveExamples(node.id);
+
+  const listEl = document.getElementById('file-list');
+
+  if (nonEmpty.length > 0) {
+    Plotly.react('hist-chart', [
+      {
+        type: 'bar', name: 'Old',
+        x: nonEmpty.map(b => b.label), y: nonEmpty.map(b => b.oldCount),
+        marker: { color: 'rgba(139,149,158,0.4)' },
+      },
+      {
+        type: 'bar', name: 'New',
+        x: nonEmpty.map(b => b.label), y: nonEmpty.map(b => b.newCount),
+        marker: { color: '#58a6ff' },
+      },
+    ], {
+      ...PLOTLY_LAYOUT, barmode: 'overlay',
+      margin: { t: 10, b: 60, l: 60, r: 20 },
+      yaxis: { title: 'File count', gridcolor: '#21262d', type: 'log' },
+      xaxis: { tickangle: -45, title: 'File size' },
+      legend: { x: 0.7, y: 1, font: { size: 11 } },
+    }, PLOTLY_CFG);
+
+    let html = '<table><tr><th>Bin</th><th>Example</th><th style="text-align:right">Size</th></tr>';
+    for (const b of nonEmpty) {
+      const ex = examples[b.i] || [];
+      for (const e of ex.slice(0, 2)) {
+        html += `<tr><td style="color:var(--text-muted);font-size:11px;">${b.label}</td>` +
+          `<td>${e.name}</td><td class="size">${fmtSize(e.size)}</td></tr>`;
+      }
+    }
+    html += '</table>';
+    listEl.innerHTML = html;
+  } else {
+    Plotly.react('hist-chart', [], {
+      ...PLOTLY_LAYOUT, margin: { t: 10, b: 40, l: 60, r: 20 },
+      annotations: [{ text: 'No file data', showarrow: false, font: { color: '#8b949e' } }],
+    }, PLOTLY_CFG);
+    listEl.innerHTML = '';
+  }
+}
+
+// ============================================================
+// Events
+// ============================================================
+document.getElementById('detail-close').addEventListener('click', () => {
+  STATE.selectedNode = null;
+  renderDetail();
+});
+
+// ============================================================
+// Boot
+// ============================================================
+async function boot() {
+  const params = new URLSearchParams(window.location.search);
+  const base = params.get('data') || window.location.href.replace(/\/[^/]*$/, '') + '/dashboard_data/';
+  const progress = document.getElementById('load-progress');
+
+  progress.textContent = 'Loading hyparquet...';
+  const { parquetReadObjects, asyncBufferFromUrl } =
+    await import('https://cdn.jsdelivr.net/npm/hyparquet@1.25.1/+esm');
+
+  progress.textContent = 'Fetching data...';
+  const [treeFile, cubeFile, exFile, metaResp] = await Promise.all([
+    asyncBufferFromUrl({ url: base + 'tree.parquet' }),
+    asyncBufferFromUrl({ url: base + 'cube.parquet' }),
+    asyncBufferFromUrl({ url: base + 'examples.parquet' }),
+    fetch(base + 'meta.json'),
+  ]);
+
+  progress.textContent = 'Parsing data...';
+  const [treeRows, cubeRows, exRows, meta] = await Promise.all([
+    parquetReadObjects({ file: treeFile }),
+    parquetReadObjects({ file: cubeFile }),
+    parquetReadObjects({ file: exFile }),
+    metaResp.json(),
+  ]);
+
+  // tree.parquet (diff schema)
+  TREE = treeRows.map(r => ({
+    id: r.node_id, parent: r.parent, name: r.name,
+    old_size: Number(r.old_size), new_size: Number(r.new_size),
+    delta: Number(r.delta), pct_change: Number(r.pct_change),
+  }));
+
+  EXTENSIONS = meta.extensions;
+  LEAF_FOLDERS = meta.leaf_folders;
+  HIST_LABELS = meta.hist_labels;
+  SUMMARY = meta.summary;
+  FOLDER_TAG_SET = new Set(LEAF_FOLDERS.map(f => f.leaf_folder));
+
+  // cube.parquet (diff schema)
+  CUBE_CELLS = {};
+  for (const r of cubeRows) {
+    const nid = r.node_id;
+    if (!CUBE_CELLS[nid]) CUBE_CELLS[nid] = [];
+    CUBE_CELLS[nid].push({
+      ext: r.ext, folder: r.leaf_folder, bin: r.size_bin,
+      old_count: Number(r.old_count), new_count: Number(r.new_count),
+      old_total: Number(r.old_total_size), new_total: Number(r.new_total_size),
+      delta_total: Number(r.delta_total_size),
+    });
+  }
+
+  // examples.parquet (standard schema, from new capture)
+  EXAMPLES_RAW = {};
+  for (const r of exRows) {
+    const nid = r.node_id;
+    if (!EXAMPLES_RAW[nid]) EXAMPLES_RAW[nid] = Array.from({length: N_BINS}, () => []);
+    EXAMPLES_RAW[nid][r.size_bin].push({
+      name: r.filename, ext: r.ext, size: Number(r.size),
+    });
+  }
+
+  progress.textContent = 'Building indices...';
+  await new Promise(r => setTimeout(r, 0));
+  buildIndices();
+
+  stateFromHash();
+  document.getElementById('loading').classList.add('hidden');
+  renderAll();
+}
+
+boot();
+</script>
+</body>
+</html>

@@ -685,29 +685,17 @@ def build(
     # 7. Write outputs
     log("Writing outputs...")
 
-    # tree.parquet
     tree_df = pl.DataFrame([
         {"node_id": n["id"], "parent": n["parent"], "name": n["name"], "size": n["size"]}
         for n in pruned_nodes
     ]).cast({"size": pl.Int64})
-    tree_df.write_parquet(str(output_dir / "tree.parquet"))
 
-    # cube.parquet
-    cube_df.write_parquet(str(output_dir / "cube.parquet"))
-
-    # examples.parquet
-    examples_df.write_parquet(str(output_dir / "examples.parquet"))
-
-    # meta.json
     meta = {
         "hist_labels": hist_labels(),
         "extensions": top_ext_df.to_dicts(),
         "leaf_folders": top_folder_df.to_dicts(),
     }
-    with open(output_dir / "meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
 
-    # Dashboard HTML + JSON (for browser)
     _export_dashboard_data(output_dir, tree_df, cube_df, examples_df, meta)
 
     log("Done!")
@@ -733,10 +721,11 @@ def update(
 
     # 1. Load existing data
     log("Loading existing dashboard...")
-    tree_df = pl.read_parquet(str(dashboard_dir / "tree.parquet"))
-    cube_df = pl.read_parquet(str(dashboard_dir / "cube.parquet"))
-    examples_df = pl.read_parquet(str(dashboard_dir / "examples.parquet"))
-    with open(dashboard_dir / "meta.json") as f:
+    data_dir = dashboard_dir / "dashboard_data"
+    tree_df = pl.read_parquet(str(data_dir / "tree.parquet"))
+    cube_df = pl.read_parquet(str(data_dir / "cube.parquet"))
+    examples_df = pl.read_parquet(str(data_dir / "examples.parquet"))
+    with open(data_dir / "meta.json") as f:
         meta = json.load(f)
 
     tree_by_id = {row["node_id"]: row for row in tree_df.to_dicts()}
@@ -899,15 +888,7 @@ def update(
         {"node_id": nid, "parent": v["parent"], "name": v["name"], "size": v["size"]}
         for nid, v in tree_by_id.items()
     ]).cast({"size": pl.Int64})
-    tree_out.write_parquet(str(dashboard_dir / "tree.parquet"))
 
-    cube_df.write_parquet(str(dashboard_dir / "cube.parquet"))
-    examples_df.write_parquet(str(dashboard_dir / "examples.parquet"))
-
-    with open(dashboard_dir / "meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
-
-    # Dashboard HTML + JSON (for browser)
     _export_dashboard_data(dashboard_dir, tree_out, cube_df, examples_df, meta)
 
     log("Done!")

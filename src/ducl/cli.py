@@ -27,8 +27,9 @@ def cli():
 @click.option("--endpoint-url", help="S3-compatible endpoint")
 @click.option("--profile", help="AWS profile name")
 @click.option("--region", help="AWS region")
+@click.option("--max-objects", type=int, default=0, help="Stop after N objects (benchmarking)")
 def scan(path, output, use_s3, no_agg, no_dashboard, block_size, workers,
-         discover_depth, endpoint_url, profile, region):
+         discover_depth, endpoint_url, profile, region, max_objects):
     """Scan a filesystem or S3 bucket into a Feather file."""
     do_agg = not no_agg
 
@@ -43,6 +44,7 @@ def scan(path, output, use_s3, no_agg, no_dashboard, block_size, workers,
             endpoint_url=endpoint_url,
             profile=profile,
             region=region,
+            max_objects=max_objects,
         )
     else:
         from .scan import scan_filesystem

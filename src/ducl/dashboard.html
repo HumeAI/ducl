@@ -406,20 +406,20 @@ function matchesExtFilters(cell) {
   return true;
 }
 
-function matchesFolderFilters(nodeId) {
+function matchesFolderFilter(nodeId, cell) {
+  if (STATE.selectedFolders.size === 0 && STATE.excludedFolders.size === 0) return true;
   const parts = NODE_PATH_PARTS[nodeId];
-  if (!parts) return true;
   if (STATE.selectedFolders.size > 0) {
-    let match = false;
     for (const f of STATE.selectedFolders) {
-      if (parts.has(f)) { match = true; break; }
+      if (parts.has(f) || cell.folder === f) return true;
     }
-    if (!match) return false;
+    return false;
   }
   if (STATE.excludedFolders.size > 0) {
     for (const f of STATE.excludedFolders) {
-      if (parts.has(f)) return false;
+      if (parts.has(f) || cell.folder === f) return false;
     }
+    return true;
   }
   return true;
 }
@@ -451,32 +451,29 @@ function recomputeSizes() {
     if (!cells) { directSizes[node.id] = 0; continue; }
 
     const inScope = !chipScope || chipScope.has(node.id);
-    const folderMatch = matchesFolderFilters(node.id);
     let sz = 0, cnt = 0;
-    let extFilteredSize = 0;
 
+    const nodeParts = NODE_PATH_PARTS[node.id];
     for (const cell of cells) {
       const cv = cellVal(cell);
       const extMatch = matchesExtFilters(cell);
+      const folderMatch = matchesFolderFilter(node.id, cell);
       if (extMatch && folderMatch) { sz += cv; cnt += cell.count; }
-      // Ext chip sizes: filtered by folder (node-level) only
+      // Ext chip sizes: cross-filtered by folder
       if (inScope && cell.ext !== null && folderMatch) {
         CHIP_EXT_SIZES[cell.ext] = (CHIP_EXT_SIZES[cell.ext] || 0) + cv;
       }
-      // Accumulate ext-filtered size for folder chip distribution
+      // Folder chip sizes: accumulate for every matching folder tag in node path
+      // (consistent with compute_top_folders which explodes all path components)
       if (inScope && extMatch) {
-        extFilteredSize += cv;
-      }
-    }
-
-    // Distribute ext-filtered size to all path-part folder tags
-    if (inScope && extFilteredSize > 0) {
-      const parts = NODE_PATH_PARTS[node.id];
-      if (parts) {
-        for (const part of parts) {
+        for (const part of nodeParts) {
           if (FOLDER_TAG_SET.has(part)) {
-            CHIP_FOLDER_SIZES[part] = (CHIP_FOLDER_SIZES[part] || 0) + extFilteredSize;
+            CHIP_FOLDER_SIZES[part] = (CHIP_FOLDER_SIZES[part] || 0) + cv;
           }
+        }
+        // Also count cell.folder if not already in node path parts
+        if (cell.folder !== null && !nodeParts.has(cell.folder) && FOLDER_TAG_SET.has(cell.folder)) {
+          CHIP_FOLDER_SIZES[cell.folder] = (CHIP_FOLDER_SIZES[cell.folder] || 0) + cv;
         }
       }
     }
@@ -530,11 +527,10 @@ function getRecursiveCells(nodeId) {
   const stack = [nodeId];
   while (stack.length > 0) {
     const nid = stack.pop();
-    const folderMatch = matchesFolderFilters(nid);
     const cells = CUBE_CELLS[nid];
-    if (cells && folderMatch) {
+    if (cells) {
       for (const cell of cells) {
-        if (matchesExtFilters(cell)) result.push(cell);
+        if (matchesExtFilters(cell) && matchesFolderFilter(nid, cell)) result.push(cell);
       }
     }
     const children = CHILDREN_MAP[nid];

@@ -16,36 +16,76 @@ def cli():
 
 
 @cli.command()
-@click.argument("path")
+@click.argument("path", required=False)
 @click.option("-o", "--output", required=True, help="Output .feather file path")
-@click.option("--s3", "use_s3", is_flag=True, help="Treat PATH as an S3 bucket name")
+@click.option("--s3", "use_s3", is_flag=True, help="Scan S3 (PATH = one bucket name, or omit for all buckets)")
+@click.option("--modal", "use_modal", is_flag=True, help="Scan Modal volumes via pwalk2 jobs (PATH = one volume name, or omit for all)")
 @click.option("--no-agg", is_flag=True, help="Skip sidecar aggregation")
 @click.option("--no-dashboard", is_flag=True, help="Skip automatic dashboard build")
 @click.option("--block-size", type=int, default=256 << 20, help="CSV read block size (default 256 MiB)")
-@click.option("-w", "--workers", type=int, default=32, help="S3 parallel listing threads")
+@click.option("-w", "--workers", type=int, default=None, help="S3 listing threads (default 32) / Modal concurrent streams (default 8)")
 @click.option("--discover-depth", type=int, default=2, help="S3 prefix discovery depth")
 @click.option("--endpoint-url", help="S3-compatible endpoint")
 @click.option("--profile", help="AWS profile name")
 @click.option("--region", help="AWS region")
+@click.option("--environment", help="Modal environment name")
 @click.option("--max-objects", type=int, default=0, help="Stop after N objects (benchmarking)")
-def scan(path, output, use_s3, no_agg, no_dashboard, block_size, workers,
-         discover_depth, endpoint_url, profile, region, max_objects):
-    """Scan a filesystem or S3 bucket into a Feather file."""
+def scan(path, output, use_s3, use_modal,
+         no_agg, no_dashboard, block_size, workers,
+         discover_depth, endpoint_url, profile, region, environment, max_objects):
+    """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
 
-    if use_s3:
-        from .s3scan import scan_bucket
-        scan_bucket(
-            bucket=path,
-            output=output,
-            workers=workers,
-            discover_depth=discover_depth,
-            do_agg=do_agg,
-            endpoint_url=endpoint_url,
-            profile=profile,
-            region=region,
-            max_objects=max_objects,
+    if use_s3 and use_modal:
+        raise click.UsageError("--s3 and --modal are mutually exclusive")
+    if not (use_modal or use_s3) and not path:
+        raise click.UsageError(
+            "PATH is required (omit it only with --modal/--s3 to scan all volumes/buckets)"
         )
+
+    if use_s3:
+        s3_workers = workers if workers is not None else 32
+        if path:
+            from .s3scan import scan_bucket
+            scan_bucket(
+                bucket=path,
+                output=output,
+                workers=s3_workers,
+                discover_depth=discover_depth,
+                do_agg=do_agg,
+                endpoint_url=endpoint_url,
+                profile=profile,
+                region=region,
+                max_objects=max_objects,
+            )
+        else:
+            from .s3scan import scan_all_buckets
+            scan_all_buckets(
+                output=output,
+                workers=s3_workers,
+                discover_depth=discover_depth,
+                do_agg=do_agg,
+                endpoint_url=endpoint_url,
+                profile=profile,
+                region=region,
+                max_objects=max_objects,
+            )
+    elif use_modal:
+        if path:
+            from .modaljob import scan_volume_job
+            scan_volume_job(
+                volume=path,
+                output=output,
+                environment=environment,
+                do_agg=do_agg,
+            )
+        else:
+            from .modaljob import scan_all_volumes_jobs
+            scan_all_volumes_jobs(
+                output=output,
+                environment=environment,
+                do_agg=do_agg,
+            )
     else:
         from .scan import scan_filesystem
         scan_filesystem(path, output, do_agg=do_agg, block_size=block_size)

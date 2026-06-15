@@ -15,6 +15,7 @@ import multiprocessing as mp
 import os
 import signal
 import sys
+import tempfile
 import time
 from collections import defaultdict
 
@@ -564,3 +565,100 @@ def scan_bucket(
             f"Wrote {examples_path}: {final_examples.height:,} example rows",
             file=sys.stderr,
         )
+
+
+# ---------------------------------------------------------------------------
+# Scan all buckets into one capture
+# ---------------------------------------------------------------------------
+
+def list_bucket_names(
+    endpoint_url: str | None = None,
+    profile: str | None = None,
+    region: str | None = None,
+) -> list[str]:
+    """Return the names of all buckets visible to the configured credentials."""
+    client = make_s3_client(endpoint_url=endpoint_url, profile=profile, region=region)
+    resp = client.list_buckets()
+    return [b["Name"] for b in resp.get("Buckets", [])]
+
+
+def _combine_feathers(parts: list[tuple[str, str]], output: str, do_agg: bool) -> int:
+    """Concatenate per-bucket feathers (+sidecars) into one capture.
+
+    *parts* is a list of ``(label, feather_path)``.  Paths are already prefixed
+    with ``/<bucket>`` by ``scan_bucket`` so no rewriting is needed.
+    """
+    total_rows = 0
+    agg_parts: list[pl.DataFrame] = []
+    ex_parts: list[pl.DataFrame] = []
+    write_opts = ipc.IpcWriteOptions(compression="zstd")
+
+    with pa.OSFile(output, "wb") as sink:
+        writer = ipc.new_file(sink, SCHEMA, options=write_opts)
+        try:
+            for _label, fpath in parts:
+                if not os.path.exists(fpath):
+                    continue
+                reader = ipc.open_file(pa.memory_map(fpath))
+                for i in range(reader.num_record_batches):
+                    batch = reader.get_batch(i)
+                    writer.write_batch(batch)
+                    total_rows += batch.num_rows
+                if do_agg:
+                    base = fpath.removesuffix(".feather")
+                    agg_p = base + ".agg.parquet"
+                    ex_p = base + ".examples.parquet"
+                    if os.path.exists(agg_p):
+                        agg_parts.append(pl.read_parquet(agg_p))
+                    if os.path.exists(ex_p):
+                        ex_parts.append(pl.read_parquet(ex_p))
+        finally:
+            writer.close()
+
+    base = output.removesuffix(".feather")
+    if do_agg and agg_parts:
+        compact_agg(agg_parts).write_parquet(base + ".agg.parquet")
+    if do_agg and ex_parts:
+        compact_examples(ex_parts).write_parquet(base + ".examples.parquet")
+    return total_rows
+
+
+def scan_all_buckets(
+    output: str,
+    prefix: str = "",
+    workers: int = 32,
+    discover_depth: int = 2,
+    do_agg: bool = True,
+    do_dirs: bool = True,
+    endpoint_url: str | None = None,
+    profile: str | None = None,
+    region: str | None = None,
+    max_objects: int = 0,
+) -> None:
+    """Scan every visible bucket into one capture, each prefixed by ``/<bucket>``."""
+    print("Listing buckets...", file=sys.stderr, flush=True)
+    names = sorted(list_bucket_names(endpoint_url, profile, region))
+    print(f"  {len(names)} buckets found", file=sys.stderr, flush=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        parts: list[tuple[str, str]] = []
+        for i, name in enumerate(names, 1):
+            print(f"\n[{i}/{len(names)}] {name}", file=sys.stderr, flush=True)
+            tmp = os.path.join(td, f"{name.replace('/', '_')}.feather")
+            try:
+                scan_bucket(
+                    bucket=name, output=tmp, prefix=prefix,
+                    workers=workers, discover_depth=discover_depth,
+                    do_agg=do_agg, do_dirs=do_dirs,
+                    endpoint_url=endpoint_url, profile=profile, region=region,
+                    max_objects=max_objects,
+                )
+                parts.append((name, tmp))
+            except Exception as exc:  # noqa: BLE001
+                print(f"  warning: skipping {name!r}: {exc}", file=sys.stderr, flush=True)
+
+        total = _combine_feathers(parts, output, do_agg)
+
+    mb = os.path.getsize(output) / 1e6
+    print(f"\nWrote {output}: {total:,} rows, {mb:.1f} MB (from {len(parts)} buckets)",
+          file=sys.stderr, flush=True)

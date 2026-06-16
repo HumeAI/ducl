@@ -617,8 +617,14 @@ def build(
     top_n_extensions: int = TOP_N_EXTENSIONS,
     top_n_folders: int = TOP_N_FOLDERS,
     examples_per_bin: int = EXAMPLES_PER_BIN,
+    collapse_rules: list[str] | None = None,
 ) -> None:
-    """Full build: Feather -> tree.parquet + cube.parquet + examples.parquet + meta.json."""
+    """Full build: Feather -> tree.parquet + cube.parquet + examples.parquet + meta.json.
+
+    ``collapse_rules`` is a list of regexes whose capture groups mark the folder-
+    name parts to collapse to ``*`` (date-stamped, numbered, ...), grouping them
+    before the tree/cube/folder aggregation -- see :mod:`ducl.foldernorm`.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -644,6 +650,17 @@ def build(
         files_df = load_files(input_file)
         example_candidates = None
         log(f"  {files_df.height:,} files")
+
+    if collapse_rules:
+        from .foldernorm import normalize_columns
+        files_df = normalize_columns(
+            files_df, collapse_rules, path_cols=("path",), component_cols=("leaf_folder",)
+        )
+        if example_candidates is not None:
+            example_candidates = normalize_columns(
+                example_candidates, collapse_rules, path_cols=("dir_path",)
+            )
+        log(f"  applied {len(collapse_rules)} folder-collapse rule(s)")
 
     root_path, root_n_parts = detect_root(files_df)
     log(f"  root: {root_path}")

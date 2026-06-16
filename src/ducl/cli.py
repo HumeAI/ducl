@@ -30,9 +30,13 @@ def cli():
 @click.option("--region", help="AWS region")
 @click.option("--environment", help="Modal environment name")
 @click.option("--max-objects", type=int, default=0, help="Stop after N objects (benchmarking)")
+@click.option("--collapse", multiple=True, metavar="REGEX",
+              help="Collapse folder names: a regex whose capture groups are replaced "
+                   "with '*' (the rest is kept). Repeatable. "
+                   r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
 def scan(path, output, use_s3, use_modal,
          no_agg, no_dashboard, block_size, workers,
-         discover_depth, endpoint_url, profile, region, environment, max_objects):
+         discover_depth, endpoint_url, profile, region, environment, max_objects, collapse):
     """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
 
@@ -94,16 +98,20 @@ def scan(path, output, use_s3, use_modal,
         out_dir = Path(output).parent / (Path(output).stem + "_dashboard")
         click.echo(f"Building dashboard in {out_dir} ...", err=True)
         from .dashboard import build
-        build(output, out_dir)
+        build(output, out_dir, collapse_rules=list(collapse) or None)
 
 
 @cli.command()
 @click.argument("feather")
 @click.argument("output_dir")
-def dashboard(feather, output_dir):
+@click.option("--collapse", multiple=True, metavar="REGEX",
+              help="Collapse folder names: a regex whose capture groups are replaced "
+                   "with '*' (the rest is kept). Repeatable. "
+                   r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
+def dashboard(feather, output_dir, collapse):
     """Build a dashboard from a Feather scan file."""
     from .dashboard import build
-    build(feather, output_dir)
+    build(feather, output_dir, collapse_rules=list(collapse) or None)
 
 
 @cli.command("update")

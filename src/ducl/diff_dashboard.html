@@ -515,16 +515,22 @@ function buildIndices() {
   NODE_MAP = {};
   CHILDREN_MAP = {};
   NODE_PATH_PARTS = {};
-  for (const node of TREE) {
+  // TREE[0] is the root; every other node links to its parent. Test for the
+  // root by index, not `node.parent` truthiness: when scanning all volumes the
+  // common-prefix root is "" and its children's parent is also "" (falsy), so a
+  // truthiness check would orphan every top-level node and collapse the totals.
+  for (let i = 0; i < TREE.length; i++) {
+    const node = TREE[i];
     NODE_MAP[node.id] = node;
     NODE_PATH_PARTS[node.id] = new Set(node.id.split('/').filter(Boolean));
-    if (node.parent) {
-      if (!CHILDREN_MAP[node.parent]) CHILDREN_MAP[node.parent] = [];
-      CHILDREN_MAP[node.parent].push(node);
-      node.depth = (NODE_MAP[node.parent].depth || 0) + 1;
-    } else {
+    if (i === 0) {
       node.depth = 0;
+      continue;
     }
+    if (!CHILDREN_MAP[node.parent]) CHILDREN_MAP[node.parent] = [];
+    CHILDREN_MAP[node.parent].push(node);
+    const parentNode = NODE_MAP[node.parent];
+    node.depth = ((parentNode && parentNode.depth) || 0) + 1;
   }
   TREE_BOTTOM_UP = [...TREE].sort((a, b) =>
     b.id.split('/').length - a.id.split('/').length
@@ -992,12 +998,16 @@ async function boot() {
   const { parquetReadObjects, asyncBufferFromUrl } =
     await import('https://cdn.jsdelivr.net/npm/hyparquet@1.25.1/+esm');
 
+  // Cache-bust per page load so a rebuilt dashboard is always picked up.
+  const cb = window.location.protocol.startsWith('http')
+    ? (base.includes('?') ? '&' : '?') + 'v=' + Date.now()
+    : '';  // file:// has no query strings -- skip cache-busting there
   progress.textContent = 'Fetching data...';
   const [treeFile, cubeFile, exFile, metaResp] = await Promise.all([
-    asyncBufferFromUrl({ url: base + 'tree.parquet' }),
-    asyncBufferFromUrl({ url: base + 'cube.parquet' }),
-    asyncBufferFromUrl({ url: base + 'examples.parquet' }),
-    fetch(base + 'meta.json'),
+    asyncBufferFromUrl({ url: base + 'tree.parquet' + cb }),
+    asyncBufferFromUrl({ url: base + 'cube.parquet' + cb }),
+    asyncBufferFromUrl({ url: base + 'examples.parquet' + cb }),
+    fetch(base + 'meta.json' + cb, { cache: 'no-cache' }),
   ]);
 
   progress.textContent = 'Parsing data...';

@@ -215,7 +215,7 @@
     <div class="chart-title">
       Folder Treemap — Sized by |Delta|
       <span class="badge" id="treemap-badge">all extensions</span>
-      <span class="badge" style="font-style:italic;">colored by % change · sized by churn</span>
+      <span class="badge" style="font-style:italic;">colored by growth/shrink · sized by net change (⇄ = internal reshuffle)</span>
     </div>
     <div id="treemap-chart" style="height:70vh;"></div>
   </div>
@@ -709,35 +709,67 @@ function renderTreemap() {
     return;
   }
 
-  // Collect visible nodes first to find max absolute delta for color scaling
+  // Boxes are sized by |net delta| (final size difference), not churn. Net
+  // sizing can break the treemap's branchvalues:'total' invariant: a parent's
+  // |net| may be smaller than the sum of its children's |net| when siblings
+  // move data between each other (e.g. one dir grows 1.6 TB while a sibling
+  // shrinks 1.6 TB, netting near zero). When that happens we collapse the node
+  // to a leaf and flag it as a "reshuffle" (⇄) — big internal churn, small net
+  // change — instead of letting it balloon the whole treemap.
+  const nodeVal = (id) => Math.abs(RECURSIVE_DELTAS[id] || 0);
+  const FIT_EPS = 1; // bytes of slack when comparing children sum vs parent net
+
+  // Top-down traversal: expand a node's children only when their net magnitudes
+  // fit within the node's own net. The view root is always expanded so drilling
+  // into a reshuffle subtree still reveals its contents.
   const visibleNodes = [root];
   const included = new Set([root.id]);
-
-  for (const node of TREE) {
-    if (node === root) continue;
-    const absDelta = RECURSIVE_ABS_DELTAS[node.id] || 0;
-    if (absDelta <= 0) continue;
-    if (!included.has(node.parent)) continue;
-    if (node.depth > maxDataDepth && !viewRoot.id.startsWith(node.id + '/') && node.id !== viewRoot.id) continue;
-    visibleNodes.push(node);
-    included.add(node.id);
+  const reshuffle = new Set();
+  const queue = [root];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    const realChildren = (CHILDREN_MAP[node.id] || [])
+      .filter(c => !c.id.endsWith('/__rest__') && nodeVal(c.id) > 0);
+    if (realChildren.length === 0) continue;
+    const childSum = realChildren.reduce((s, c) => s + nodeVal(c.id), 0);
+    const isReshuffle = childSum > nodeVal(node.id) + FIT_EPS;
+    if (isReshuffle) reshuffle.add(node.id);
+    const withinDepth = node.depth < maxDataDepth
+      || node.id === viewRoot.id || viewRoot.id.startsWith(node.id + '/');
+    const forceExpand = node.id === viewRoot.id;
+    if (!forceExpand && (isReshuffle || !withinDepth)) continue;  // collapse to leaf
+    for (const c of realChildren) {
+      visibleNodes.push(c);
+      included.add(c.id);
+      queue.push(c);
+    }
   }
 
-  // Max absolute delta among visible nodes (for color normalization)
+  // Display value bottom-up: max(own net, sum of visible children) so every
+  // parent >= sum(children) even when a reshuffle node is force-expanded as the
+  // view root. For normal nodes children fit, so this is just the net.
+  const displayVal = {};
+  for (const node of [...visibleNodes].sort((a, b) => b.depth - a.depth)) {
+    let childSum = 0;
+    const ch = CHILDREN_MAP[node.id];
+    if (ch) for (const c of ch) if (included.has(c.id)) childSum += displayVal[c.id] || 0;
+    displayVal[node.id] = Math.max(nodeVal(node.id), childSum);
+  }
+
+  // Max net delta among visible nodes (for color normalization)
   let maxAbsDelta = 0;
   for (const node of visibleNodes) {
-    const d = Math.abs(RECURSIVE_DELTAS[node.id] || 0);
+    const d = nodeVal(node.id);
     if (d > maxAbsDelta) maxAbsDelta = d;
   }
 
   for (const node of visibleNodes) {
-    const absDelta = RECURSIVE_ABS_DELTAS[node.id] || 0;
     const delta = RECURSIVE_DELTAS[node.id] || 0;
     ids.push(node.id);
     labels.push(node.name);
     parents.push(node === root ? '' : node.parent);
-    values.push(absDelta);
-    text.push(fmtDelta(delta));
+    values.push(displayVal[node.id]);
+    text.push(fmtDelta(delta) + (reshuffle.has(node.id) ? ' ⇄' : ''));
     colors.push(deltaToColor(delta, maxAbsDelta));
   }
 
@@ -749,7 +781,11 @@ function renderTreemap() {
     hovertemplate: ids.map(id => {
       const n = NODE_MAP[id];
       if (!n) return '<b>%{label}</b><extra></extra>';
-      return `<b>%{label}</b><br>Old: ${fmtSize(n.old_size)}<br>New: ${fmtSize(n.new_size)}<br>Delta: ${fmtDelta(n.delta)}<extra></extra>`;
+      let h = `<b>%{label}</b><br>Old: ${fmtSize(n.old_size)}<br>New: ${fmtSize(n.new_size)}<br>Delta: ${fmtDelta(n.delta)}`;
+      if (reshuffle.has(id)) {
+        h += `<br>Churn: ${fmtSize(RECURSIVE_ABS_DELTAS[id] || 0)} (data moved between subfolders)`;
+      }
+      return h + '<extra></extra>';
     }),
     textinfo: 'label+text',
     textposition: 'middle center',

@@ -99,7 +99,7 @@ def scan(path, output, use_s3, use_modal,
         # against pwalk2 on three trees (see quiverscan.to_ducl_frame).
         from .quiverscan import scan_filesystem_quiver
         scan_filesystem_quiver(path, output, do_agg=do_agg,
-                               nworkers=workers or 64, bvm_exe=bvm_exe)
+                               nworkers=workers or 128, bvm_exe=bvm_exe)
     else:
         from .scan import scan_filesystem
         scan_filesystem(path, output, do_agg=do_agg, block_size=block_size)

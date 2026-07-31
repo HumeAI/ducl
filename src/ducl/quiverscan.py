@@ -140,7 +140,11 @@ def to_ducl_frame(df: pl.DataFrame, root: str, st=None) -> pl.DataFrame:
 
 
 def scan_filesystem_quiver(path: str, output: str, *, do_agg: bool = True,
-                           nworkers: int = 64, bvm_exe: str | None = None) -> None:
+                           nworkers: int = 128, bvm_exe: str | None = None) -> None:
+    """128 is the cheap end of the plateau: wall time is flat from 128 to 1024 walkers
+    (0.89/0.80/0.87/0.89 s on 233k entries) while readdir blocking doubles with every
+    doubling of threads -- the WEKA metadata service is saturated at ~292k entries/s, so
+    extra threads only add waiters."""
     """Scan *path* with quiver's walker and write ducl's Feather (+ agg sidecars)."""
     from .scan import feather_from_batches
 

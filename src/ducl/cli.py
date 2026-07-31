@@ -23,6 +23,9 @@ def cli():
 @click.option("--no-agg", is_flag=True, help="Skip sidecar aggregation")
 @click.option("--no-dashboard", is_flag=True, help="Skip automatic dashboard build")
 @click.option("--block-size", type=int, default=256 << 20, help="CSV read block size (default 256 MiB)")
+@click.option("--scanner", type=click.Choice(["pwalk2", "quiver"]), default="pwalk2",
+              help="Filesystem walker: bundled pwalk2 (CSV) or quiver's bvm (Arrow direct)")
+@click.option("--bvm", "bvm_exe", help="quiver bvm binary (default: quiver's own)")
 @click.option("-w", "--workers", type=int, default=None, help="S3 listing threads (default 32) / Modal concurrent streams (default 8)")
 @click.option("--discover-depth", type=int, default=2, help="S3 prefix discovery depth")
 @click.option("--endpoint-url", help="S3-compatible endpoint")
@@ -35,7 +38,7 @@ def cli():
                    "with '*' (the rest is kept). Repeatable. "
                    r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
 def scan(path, output, use_s3, use_modal,
-         no_agg, no_dashboard, block_size, workers,
+         no_agg, no_dashboard, block_size, scanner, bvm_exe, workers,
          discover_depth, endpoint_url, profile, region, environment, max_objects, collapse):
     """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
@@ -90,6 +93,13 @@ def scan(path, output, use_s3, use_modal,
                 environment=environment,
                 do_agg=do_agg,
             )
+    elif scanner == "quiver":
+        # quiver's bvm emits Arrow STAT batches straight off its walker pool, so this skips
+        # pwalk2's CSV -> pyarrow.csv hop entirely. Same table: validated column-for-column
+        # against pwalk2 on three trees (see quiverscan.to_ducl_frame).
+        from .quiverscan import scan_filesystem_quiver
+        scan_filesystem_quiver(path, output, do_agg=do_agg,
+                               nworkers=workers or 64, bvm_exe=bvm_exe)
     else:
         from .scan import scan_filesystem
         scan_filesystem(path, output, do_agg=do_agg, block_size=block_size)

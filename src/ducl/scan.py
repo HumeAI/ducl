@@ -55,12 +55,23 @@ def feather_from_csv_stream(
         print(f"\nWrote {output}: 0 rows, 0.0 MB", file=sys.stderr)
         return
 
+    feather_from_batches(reader, output, do_agg=do_agg)
+
+
+def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
+    """Write an iterable of Arrow RecordBatches to zstd Feather (+ agg sidecars).
+
+    Split out of feather_from_csv_stream so the CSV path and the quiver-scanner path
+    (quiverscan.py, which gets Arrow straight from the walker and never makes CSV) write
+    identical output through identical code.
+    """
     write_opts = ipc.IpcWriteOptions(compression="zstd")
     total_rows = 0
     batch_count = 0
 
     agg_batches: list[pl.DataFrame] = []
     example_batches: list[pl.DataFrame] = []
+    reader = batches
 
     with pa.OSFile(output, "wb") as sink:
         writer = ipc.new_file(sink, SCHEMA, options=write_opts)

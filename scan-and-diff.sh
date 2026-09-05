@@ -40,7 +40,7 @@ fi
 # 1. Scan (writes .feather, .agg.parquet, .examples.parquet, and _dashboard/).
 if [[ ! -f "${NEW_BASE}.feather" ]]; then
 #    srun --partition=gpu -G 4 --job-name interactive --pty 
-        sudo "$DUCL" scan -o "${NEW_BASE}.feather" /mnt/weka/
+        sudo "$DUCL" scan --scanner quiver -o "${NEW_BASE}.feather" /mnt/weka/
 else
     echo ">>> ${NEW_BASE}.feather already exists, skipping scan"
 fi

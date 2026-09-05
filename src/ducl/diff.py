@@ -326,15 +326,25 @@ def diff(
     use_agg_new = new_candidates is not None
     log(f"  {new_df.height:,} rows (agg={use_agg_new})")
 
-    # 2. Validate roots
+    # 2. Validate roots. detect_root infers the root as the longest common
+    # path prefix, so a capture that happens to cover a single top-level
+    # folder (e.g. an S3 key that saw one bucket) detects a deeper root than
+    # a capture of the same namespace with more folders. When one root is an
+    # ancestor of the other, build both trees from the ancestor: the subtree
+    # the narrower capture never saw then shows up as added/removed.
     old_root, old_n_parts = detect_root(old_df)
     new_root, new_n_parts = detect_root(new_df)
     if old_root != new_root:
-        raise ValueError(
-            f"Root mismatch: old={old_root!r}, new={new_root!r}. "
-            f"Cannot diff captures with different root paths."
-        )
-    log(f"  root: {old_root}")
+        if old_root.startswith(new_root + "/"):
+            old_root, old_n_parts = new_root, new_n_parts
+        elif new_root.startswith(old_root + "/"):
+            new_root, new_n_parts = old_root, old_n_parts
+        else:
+            raise ValueError(
+                f"Root mismatch: old={old_root!r}, new={new_root!r}. "
+                f"Cannot diff captures with different root paths."
+            )
+    log(f"  root: {old_root!r}")
 
     # 3. Compute union top-N extensions and folders
     log("Computing union top extensions and folders...")

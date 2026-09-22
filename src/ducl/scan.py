@@ -17,6 +17,7 @@ import pyarrow.csv as pcsv
 import pyarrow.ipc as ipc
 
 from .schema import COLUMN_NAMES, SCHEMA
+from .wsds_sparse import SparseSizeFixer
 from .agg import process_batch, compact_agg, compact_examples
 
 
@@ -72,11 +73,13 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
     agg_batches: list[pl.DataFrame] = []
     example_batches: list[pl.DataFrame] = []
     reader = batches
+    sparse_fixer = SparseSizeFixer()
 
     with pa.OSFile(output, "wb") as sink:
         writer = ipc.new_file(sink, SCHEMA, options=write_opts)
         try:
             for batch in reader:
+                batch = sparse_fixer(batch)
                 writer.write_batch(batch)
                 total_rows += batch.num_rows
                 batch_count += 1
@@ -102,6 +105,7 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
         f"\nWrote {output}: {total_rows:,} rows, {mb:.1f} MB",
         file=sys.stderr,
     )
+    sparse_fixer.report()
 
     # Write sidecar files
     if do_agg and agg_batches:

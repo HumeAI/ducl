@@ -17,7 +17,10 @@ cd "$DATA_DIR"
 if [[ -n "${2:-}" ]]; then
     OLD_BASE="mnt-weka-${2}"
 else
+    # Strict date-only names: backups like mnt-weka-DATE-presparse.feather
+    # must not be picked up as the previous capture.
     OLD_BASE=$(ls -1 mnt-weka-*.feather 2>/dev/null \
+        | grep -E '^mnt-weka-[0-9]{4}-[0-9]{2}-[0-9]{2}\.feather$' \
         | grep -v "^${NEW_BASE}\.feather$" \
         | sed 's/\.feather$//' \
         | sort -r | head -n1)

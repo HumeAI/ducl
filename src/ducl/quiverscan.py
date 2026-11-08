@@ -161,7 +161,10 @@ def stream_batches(root: str, nworkers: int = 128, bvm_exe: str | None = None,
     sys.path.insert(0, "/mnt/weka/jpc/src/quiver")
     from quiver.exec import blocks
 
-    b = blocks._Bvm(bvm_exe or blocks.default_bvm(), nworkers)
+    # BOUNDED reader queue. Unbounded, the walkers outrun the projection + zstd + agg below
+    # and the backlog is the scan: the full mount OOMed at 344 GB, 183M rows in. Safe here
+    # because after scan_dirs this loop only reads -- nothing waits on a send.
+    b = blocks._Bvm(bvm_exe or blocks.default_bvm(), nworkers, qmax=256)
     b.scan_dirs(0, root)
     rows, last, held, nheld = 0, 0, [], 0
     nerr = collections.Counter()

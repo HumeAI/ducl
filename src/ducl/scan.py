@@ -59,6 +59,20 @@ def feather_from_csv_stream(
     feather_from_batches(reader, output, do_agg=do_agg)
 
 
+def _write_parquet_atomic(df: pl.DataFrame, path: str) -> None:
+    """write_parquet to ``path + ".tmp"`` then rename, so a crash leaves no partial sidecar."""
+    tmp = path + ".tmp"
+    try:
+        df.write_parquet(tmp)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp, path)
+
+
 def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
     """Write an iterable of Arrow RecordBatches to zstd Feather (+ agg sidecars).
 
@@ -75,30 +89,43 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
     reader = batches
     sparse_fixer = SparseSizeFixer()
 
-    with pa.OSFile(output, "wb") as sink:
-        writer = ipc.new_file(sink, SCHEMA, options=write_opts)
+    # Write to a temp name in the same directory and rename into place only once the
+    # footer is on disk. A scan that dies mid-write (OOM, preemption) must not leave a
+    # date-named .feather behind: downstream tools pick captures by name, and a
+    # footerless file fails much later with polars' "InvalidFooter".
+    tmp_output = output + ".tmp"
+    try:
+        with pa.OSFile(tmp_output, "wb") as sink:
+            writer = ipc.new_file(sink, SCHEMA, options=write_opts)
+            try:
+                for batch in reader:
+                    batch = sparse_fixer(batch)
+                    writer.write_batch(batch)
+                    total_rows += batch.num_rows
+                    batch_count += 1
+                    print(
+                        f"\r  {total_rows:,} rows ({batch_count} batches)",
+                        end="",
+                        flush=True,
+                        file=sys.stderr,
+                    )
+                    if do_agg:
+                        agg_df, ex_df = process_batch(batch)
+                        agg_batches.append(agg_df)
+                        example_batches.append(ex_df)
+                        # Compact every 5 batches to bound memory
+                        if len(agg_batches) >= 5:
+                            agg_batches = [compact_agg(agg_batches)]
+                            example_batches = [compact_examples(example_batches)]
+            finally:
+                writer.close()
+    except BaseException:
         try:
-            for batch in reader:
-                batch = sparse_fixer(batch)
-                writer.write_batch(batch)
-                total_rows += batch.num_rows
-                batch_count += 1
-                print(
-                    f"\r  {total_rows:,} rows ({batch_count} batches)",
-                    end="",
-                    flush=True,
-                    file=sys.stderr,
-                )
-                if do_agg:
-                    agg_df, ex_df = process_batch(batch)
-                    agg_batches.append(agg_df)
-                    example_batches.append(ex_df)
-                    # Compact every 5 batches to bound memory
-                    if len(agg_batches) >= 5:
-                        agg_batches = [compact_agg(agg_batches)]
-                        example_batches = [compact_examples(example_batches)]
-        finally:
-            writer.close()
+            os.unlink(tmp_output)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp_output, output)
 
     mb = os.path.getsize(output) / 1e6
     print(
@@ -114,7 +141,7 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
         # Final agg merge
         final_agg = compact_agg(agg_batches)
         agg_path = base + ".agg.parquet"
-        final_agg.write_parquet(agg_path)
+        _write_parquet_atomic(final_agg, agg_path)
         print(
             f"Wrote {agg_path}: {final_agg.height:,} agg rows",
             file=sys.stderr,
@@ -123,7 +150,7 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
         # Final examples merge
         final_examples = compact_examples(example_batches)
         examples_path = base + ".examples.parquet"
-        final_examples.write_parquet(examples_path)
+        _write_parquet_atomic(final_examples, examples_path)
         print(
             f"Wrote {examples_path}: {final_examples.height:,} example rows",
             file=sys.stderr,

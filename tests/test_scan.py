@@ -99,3 +99,24 @@ def test_feather_from_csv_stream_empty(tmp_path: Path):
     # Should be a valid IPC file with 0 rows
     df = pl.read_ipc(output)
     assert len(df) == 0
+
+
+def test_feather_from_batches_atomic(tmp_path: Path):
+    """A writer that dies mid-stream must leave no .feather (or .tmp) behind."""
+    import pyarrow as pa
+    from ducl.scan import SCHEMA, feather_from_batches
+
+    def batches(fail_after: int):
+        for i in range(3):
+            if i == fail_after:
+                raise MemoryError("boom")
+            yield pa.RecordBatch.from_pydict({f.name: [] for f in SCHEMA}, schema=SCHEMA)
+
+    ok = tmp_path / "ok.feather"
+    feather_from_batches(batches(99), str(ok), do_agg=False)
+    assert ok.read_bytes()[-6:] == b"ARROW1"
+
+    bad = tmp_path / "bad.feather"
+    with pytest.raises(MemoryError):
+        feather_from_batches(batches(1), str(bad), do_agg=False)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["ok.feather"]

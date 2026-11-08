@@ -1,63 +1,23 @@
-"""Convert pwalk2 CSV to zstd-compressed Feather (Arrow IPC).
+"""Write a stream of Arrow RecordBatches to zstd-compressed Feather (Arrow IPC).
 
-Provides ``feather_from_csv_stream`` (generic stdin/pipe reader) and
-``scan_filesystem`` (runs bundled pwalk2 and pipes into feather writer).
+``feather_from_batches`` is the filesystem scanner's writer (quiverscan.py feeds it bvm's
+batches, locally and inside Modal jobs). It streams batches to disk,
+builds the .agg.parquet / .examples.parquet sidecars as they flow by, and writes every
+output atomically (temp name + rename).
 """
 
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import sys
-from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
-import pyarrow.csv as pcsv
 import pyarrow.ipc as ipc
 
-from .schema import COLUMN_NAMES, SCHEMA
+from .schema import SCHEMA
 from .wsds_sparse import SparseSizeFixer
 from .agg import process_batch, compact_agg, compact_examples
-
-
-def _pwalk2_binary() -> Path:
-    """Locate the bundled pwalk2 binary."""
-    return Path(__file__).parent / "pwalk2" / "pwalk2"
-
-
-def feather_from_csv_stream(
-    stream,
-    output: str,
-    *,
-    do_agg: bool = True,
-    block_size: int = 256 << 20,
-) -> None:
-    """Read pwalk2 CSV from *stream* and write a zstd-compressed Feather file.
-
-    Optionally produces sidecar .agg.parquet and .examples.parquet files.
-    """
-    try:
-        reader = pcsv.open_csv(
-            stream,
-            read_options=pcsv.ReadOptions(
-                column_names=COLUMN_NAMES,
-                block_size=block_size,
-            ),
-            parse_options=pcsv.ParseOptions(quote_char='"'),
-            convert_options=pcsv.ConvertOptions(column_types=SCHEMA),
-        )
-    except pa.lib.ArrowInvalid:
-        # Empty CSV — write a valid empty Feather file
-        write_opts = ipc.IpcWriteOptions(compression="zstd")
-        with pa.OSFile(output, "wb") as sink:
-            writer = ipc.new_file(sink, SCHEMA, options=write_opts)
-            writer.close()
-        print(f"\nWrote {output}: 0 rows, 0.0 MB", file=sys.stderr)
-        return
-
-    feather_from_batches(reader, output, do_agg=do_agg)
 
 
 def _write_parquet_atomic(df: pl.DataFrame, path: str) -> None:
@@ -77,9 +37,8 @@ def _write_parquet_atomic(df: pl.DataFrame, path: str) -> None:
 def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
     """Write an iterable of Arrow RecordBatches to zstd Feather (+ agg sidecars).
 
-    Split out of feather_from_csv_stream so the CSV path and the quiver-scanner path
-    (quiverscan.py, which gets Arrow straight from the walker and never makes CSV) write
-    identical output through identical code.
+    Kept separate from the walker so any batch source writes identical output through
+    identical code.
     """
     write_opts = ipc.IpcWriteOptions(compression="zstd")
     total_rows = 0
@@ -156,70 +115,3 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
             f"Wrote {examples_path}: {final_examples.height:,} example rows",
             file=sys.stderr,
         )
-
-
-def pwalk2_command(
-    path: str,
-    *,
-    pwalk2_args: list[str] | None = None,
-    sudo: bool = False,
-    binary: Path | None = None,
-) -> list[str]:
-    """argv for running the bundled pwalk2 on *path*.
-
-    With ``sudo=True`` only the walker is elevated (``sudo -- pwalk2 ...``);
-    this Python process, and therefore the output files it writes, stay
-    under the invoking user. Without root pwalk2 can only stat what the
-    user may read and prints "unable to setuid root" -- a scan of a shared
-    mount silently misses other users' private directories.
-    """
-    binary = binary or _pwalk2_binary()
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"pwalk2 binary not found at {binary}. "
-            "pwalk2 requires Linux and is compiled at install time."
-        )
-    cmd: list[str] = []
-    if sudo:
-        if shutil.which("sudo") is None:
-            raise FileNotFoundError("--sudo requested but no `sudo` on PATH")
-        # `--` so pwalk2's own options (--threads ...) are never parsed by sudo.
-        cmd += ["sudo", "--"]
-    cmd.append(str(binary))
-    if pwalk2_args:
-        cmd.extend(pwalk2_args)
-    cmd.append(path)
-    return cmd
-
-
-def scan_filesystem(
-    path: str,
-    output: str,
-    *,
-    do_agg: bool = True,
-    block_size: int = 256 << 20,
-    pwalk2_args: list[str] | None = None,
-    sudo: bool = False,
-) -> None:
-    """Run the bundled pwalk2 on *path* and pipe output to feather writer.
-
-    *sudo* runs just the pwalk2 child as root (see :func:`pwalk2_command`);
-    sudo prompts for a password on the controlling tty if it needs one.
-    """
-    cmd = pwalk2_command(path, pwalk2_args=pwalk2_args, sudo=sudo)
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    try:
-        feather_from_csv_stream(
-            proc.stdout,
-            output,
-            do_agg=do_agg,
-            block_size=block_size,
-        )
-    finally:
-        proc.wait()
-        if proc.returncode != 0:
-            print(
-                f"pwalk2 exited with code {proc.returncode}",
-                file=sys.stderr,
-            )

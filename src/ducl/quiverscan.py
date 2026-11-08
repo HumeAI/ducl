@@ -1,8 +1,8 @@
-"""Scan a filesystem with quiver's walker instead of bundled pwalk2 + CSV.
+"""Scan a filesystem with quiver's walker (bvm) into ducl's Feather schema.
 
-pwalk2 emits CSV that pyarrow re-parses into Arrow; quiver's bvm emits Arrow STAT batches
-straight off its walker pool, so this deletes the whole CSV hop. The identity fields are
-byte-identical between the two scanners -- same `ino`, `parent_ino`, `dev`, `blocks`, `nlink`,
+ducl's table was defined by its original C walker, pwalk2, which emitted CSV that pyarrow
+re-parsed into Arrow; quiver's bvm emits Arrow STAT batches straight off its walker pool, so
+there is no CSV hop. The identity fields are byte-identical between the two scanners -- same `ino`, `parent_ino`, `dev`, `blocks`, `nlink`,
 `size`, and the same `mode` (pwalk2 prints it as "%07o", quiver ships the int) -- so the work
 here is projection, not re-derivation:
 
@@ -156,8 +156,7 @@ def _import_blocks():
         from quiver.exec import blocks
     except ImportError as e:
         raise RuntimeError(
-            "--scanner quiver needs the quiver-tools package: pip install 'ducl[quiver]' "
-            "(or use the default pwalk2 scanner)."
+            "ducl scan needs the quiver-tools package (bvm walker): pip install quiver-tools"
         ) from e
     return blocks
 
@@ -178,8 +177,8 @@ def _open_bvm(blocks, bvm_exe: str | None, nworkers: int, launch: list[str] | No
               file=sys.stderr)
     if launch:
         if "launch" not in params:
-            raise RuntimeError("--sudo with --scanner quiver needs a quiver whose _Bvm "
-                               "accepts launch=; update quiver or use the pwalk2 scanner")
+            raise RuntimeError("--sudo needs a quiver whose _Bvm "
+                               "accepts launch=; update quiver-tools")
         kw["launch"] = list(launch)
     return blocks._Bvm(bvm_exe or blocks.default_bvm(), nworkers, **kw)
 

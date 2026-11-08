@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ducl"
-version = "0.2.1"
+version = "0.3.0"
 description = "Disk Usage Command Line toolkit — scan, dashboard, query"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,11 +13,11 @@ dependencies = [
     "polars>=1.0",
     "pyarrow>=14.0",
     "numpy>=1.24",
+    "quiver-tools>=0.1",   # the filesystem walker (bvm), prebuilt in its manylinux wheel
 ]
 
 [project.optional-dependencies]
 s3 = ["boto3>=1.28"]
-quiver = ["quiver-tools>=0.1"]   # --scanner quiver: Arrow-native walker (bvm)
 dev = ["pytest>=7.0", "boto3>=1.28"]
 
 [project.scripts]
@@ -26,11 +26,8 @@ ducl = "ducl.cli:cli"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ducl"]
 
-[tool.hatch.build.targets.wheel.hooks.custom]
-path = "hatch_build.py"
-
 [tool.hatch.build.targets.sdist]
-include = ["src/ducl/**", "tests/**", "pyproject.toml", "README.md", "hatch_build.py"]
+include = ["src/ducl/**", "tests/**", "pyproject.toml", "README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

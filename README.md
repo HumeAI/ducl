@@ -10,10 +10,9 @@ pip install ducl[s3]        # with S3 support (boto3)
 pip install -e ".[dev]"     # development (editable + pytest)
 ```
 
-On Linux the bundled **pwalk2** C binary is compiled automatically at install time.
-If `zig` is available (`pip install ziglang` is enough) it is cross-compiled against
-glibc 2.17, so the resulting wheel runs on any distro since CentOS 7 / Ubuntu 14.04.
-Without zig the host `gcc` is used and the binary requires the build host's glibc or newer.
+ducl is pure Python. The filesystem walker is `bvm` from the
+[quiver-tools](https://pypi.org/project/quiver-tools/) dependency, which ships prebuilt in
+its manylinux wheel (Linux x86_64, glibc 2.28 or newer), so nothing is compiled at install time.
 
 ## Usage
 
@@ -21,15 +20,12 @@ Without zig the host `gcc` is used and the binary requires the build host's glib
 # Scan a filesystem → Feather file + dashboard
 ducl scan /mnt/data -o scan.feather
 
-# Same, but let the walker read every directory: only the pwalk2 child runs
+# Same, but let the walker read every directory: only the bvm walker runs
 # under sudo; ducl and the files it writes stay under your user
 ducl scan /mnt/data -o scan.feather --sudo
 
 # Scan an S3 bucket
 ducl scan my-bucket -o bucket.feather --s3
-
-# Scan with quiver's Arrow-native walker instead of pwalk2 (pip install 'ducl[quiver]')
-ducl scan /mnt/data -o scan.feather --scanner quiver
 
 # Build dashboard from existing Feather
 ducl dashboard scan.feather ./output/
@@ -39,9 +35,6 @@ ducl update ./output/ subtree.feather
 
 # Query scan data
 ducl query scan.feather --under /mnt/data/models/ --ext wav --top 10
-
-# Run bundled pwalk2 directly (add --sudo to elevate it)
-ducl pwalk2 /mnt/data --threads 64
 ```
 
 ## Development

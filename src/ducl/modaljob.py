@@ -1,20 +1,22 @@
-"""Scan Modal volumes by running pwalk2 *inside* Modal jobs.
+"""Scan Modal volumes by running ducl's walker *inside* Modal jobs.
 
 Rather than listing volumes remotely over the gRPC API, this fans out one Modal
-job per volume.  Each job mounts its volume and runs the bundled ``pwalk2`` (via
-``ducl scan``) against the POSIX mount -- listing happens next to the data, in
+job per volume.  Each job mounts its volume and runs ``ducl scan`` (quiver's
+``bvm`` walker) against the POSIX mount -- listing happens next to the data, in
 parallel across volumes -- then returns the compact ``.feather`` (+ aggregation
 sidecars) straight to the parent as its return value.  No staging volume or
 shared storage is involved.
 
 Each volume is mounted at ``/scan/<name>`` (namespaced so a volume called e.g.
-``lib`` can't shadow the container's own ``/lib``).  pwalk2 therefore emits paths
+``lib`` can't shadow the container's own ``/lib``).  The scan therefore emits paths
 like ``/scan/<name>/...``; when the per-volume feathers are combined locally the
 ``/scan`` prefix is stripped so each path becomes ``/<name>/...`` -- i.e. the
 volume name is the top-level folder in the dashboard.
 
-The in-container image is just Ubuntu 24.04 (glibc 2.39, new enough for the
-prebuilt pwalk2 binary) plus ``pip install ducl``.  No compilation needed.
+The in-container image is just Ubuntu 24.04 (glibc 2.39; quiver-tools' manylinux_2_28
+wheel ships a prebuilt ``bvm``) plus ``pip install ducl``.  No compilation needed.
+bvm opens its io_uring ring lazily per walker and falls back to synchronous stat when
+the sandbox (gVisor) refuses it.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from .agg import compact_agg, compact_examples
 _MOUNT_BASE = "/scan"
 _STRIP = len(_MOUNT_BASE)  # chars of the "/scan" prefix to strip from paths
 
-# Default per-job resources.  pwalk2 is metadata-bound and benefits from cores;
+# Default per-job resources.  The walker is metadata-bound and benefits from cores;
 # the feather conversion needs some RAM for big volumes.
 DEFAULT_CPU = 16.0
 DEFAULT_MEMORY_MB = 32768
@@ -80,7 +82,7 @@ def _make_scan_impl(mount_base: str):
 
         summary = ""
         for line in proc.stderr.splitlines():
-            if "pwalk2 done" in line or "Wrote " in line:
+            if "Wrote " in line:
                 summary = line.strip()
 
         return {
@@ -271,7 +273,7 @@ def scan_volume_job(
     memory_mb: int = DEFAULT_MEMORY_MB,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> None:
-    """Scan a single Modal volume via a pwalk2 Modal job."""
+    """Scan a single Modal volume via one Modal job."""
     _run_jobs(
         [volume], output, environment=environment, do_agg=do_agg,
         cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s,
@@ -287,7 +289,7 @@ def scan_all_volumes_jobs(
     memory_mb: int = DEFAULT_MEMORY_MB,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> None:
-    """Scan every visible Modal volume, one pwalk2 job each, into one capture."""
+    """Scan every visible Modal volume, one job each, into one capture."""
     print("Listing Modal volumes...", file=sys.stderr, flush=True)
     names = sorted(list_volume_names(environment))
     print(f"  {len(names)} volumes found", file=sys.stderr, flush=True)

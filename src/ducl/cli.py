@@ -19,17 +19,15 @@ def cli():
 @click.argument("path", required=False)
 @click.option("-o", "--output", required=True, help="Output .feather file path")
 @click.option("--s3", "use_s3", is_flag=True, help="Scan S3 (PATH = one bucket name, or omit for all buckets)")
-@click.option("--modal", "use_modal", is_flag=True, help="Scan Modal volumes via pwalk2 jobs (PATH = one volume name, or omit for all)")
+@click.option("--modal", "use_modal", is_flag=True, help="Scan Modal volumes via per-volume Modal jobs (PATH = one volume name, or omit for all)")
 @click.option("--no-agg", is_flag=True, help="Skip sidecar aggregation")
 @click.option("--no-dashboard", is_flag=True, help="Skip automatic dashboard build")
-@click.option("--block-size", type=int, default=256 << 20, help="CSV read block size (default 256 MiB)")
-@click.option("--scanner", type=click.Choice(["pwalk2", "quiver"]), default="pwalk2",
-              help="Filesystem walker: bundled pwalk2 (CSV) or quiver's bvm (Arrow direct)")
-@click.option("--bvm", "bvm_exe", help="quiver bvm binary (default: quiver's own)")
+@click.option("--bvm", "bvm_exe", help="quiver bvm binary (default: the one in quiver-tools)")
 @click.option("--sudo", "use_sudo", is_flag=True,
-              help="Run only the walker (pwalk2 or quiver's bvm) under sudo so it can read "
+              help="Run only the walker (quiver's bvm) under sudo so it can read "
                    "every directory; ducl itself and the output files stay under your user")
-@click.option("-w", "--workers", type=int, default=None, help="S3 listing threads (default 32) / Modal concurrent streams (default 8)")
+@click.option("-w", "--workers", type=int, default=None,
+              help="Filesystem walker threads (default 128) / S3 listing threads (default 32)")
 @click.option("--discover-depth", type=int, default=2, help="S3 prefix discovery depth")
 @click.option("--endpoint-url", help="S3-compatible endpoint")
 @click.option("--profile", help="AWS profile name")
@@ -41,7 +39,7 @@ def cli():
                    "with '*' (the rest is kept). Repeatable. "
                    r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
 def scan(path, output, use_s3, use_modal,
-         no_agg, no_dashboard, block_size, scanner, bvm_exe, use_sudo, workers,
+         no_agg, no_dashboard, bvm_exe, use_sudo, workers,
          discover_depth, endpoint_url, profile, region, environment, max_objects, collapse):
     """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
@@ -98,16 +96,10 @@ def scan(path, output, use_s3, use_modal,
                 environment=environment,
                 do_agg=do_agg,
             )
-    elif scanner == "quiver":
-        # quiver's bvm emits Arrow STAT batches straight off its walker pool, so this skips
-        # pwalk2's CSV -> pyarrow.csv hop entirely. Same table: validated column-for-column
-        # against pwalk2 on three trees (see quiverscan.to_ducl_frame).
+    else:
         from .quiverscan import scan_filesystem_quiver
         scan_filesystem_quiver(path, output, do_agg=do_agg,
                                nworkers=workers or 128, bvm_exe=bvm_exe, sudo=use_sudo)
-    else:
-        from .scan import scan_filesystem
-        scan_filesystem(path, output, do_agg=do_agg, block_size=block_size, sudo=use_sudo)
 
     if not no_dashboard and os.path.exists(output):
         out_dir = Path(output).parent / (Path(output).stem + "_dashboard")
@@ -165,28 +157,3 @@ def query(feather, **kwargs):
     from .query import run_query
     ext_vals = list(kwargs.pop("ext")) or None
     run_query(feather, ext=ext_vals, **kwargs)
-
-
-@cli.command(
-    "pwalk2",
-    context_settings=dict(
-        ignore_unknown_options=True,
-        allow_extra_args=True,
-    ),
-)
-@click.option("--sudo", "use_sudo", is_flag=True, help="Run pwalk2 under sudo")
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def pwalk2_cmd(use_sudo, args):
-    """Run the bundled pwalk2 binary (all arguments forwarded)."""
-    binary = Path(__file__).parent / "pwalk2" / "pwalk2"
-    if not binary.exists():
-        click.echo(
-            "Error: pwalk2 binary not found. "
-            "pwalk2 requires Linux and is compiled at install time.",
-            err=True,
-        )
-        sys.exit(1)
-    argv = [str(binary)] + list(args)
-    if use_sudo:
-        argv = ["sudo", "--"] + argv
-    os.execvp(argv[0], argv)

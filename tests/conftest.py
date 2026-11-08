@@ -1,6 +1,6 @@
 """Synthetic data fixtures for dashboard tests.
 
-Generates Feather files matching the pwalk2 schema with controllable structure.
+Generates Feather files matching the canonical ducl schema with controllable structure.
 Tests use small pruning thresholds so synthetic data stays tiny.
 
 Fixture tree (~50 files across 3 levels):
@@ -40,7 +40,7 @@ TEST_TOP_N_FOLDERS = 4
 
 
 def _make_file_row(path: str, size: int, ext: str = "") -> dict:
-    """Create a file row matching the pwalk2 schema subset needed by dashboard.py."""
+    """Create a file row matching the schema subset needed by dashboard.py."""
     return {
         "inode_id": abs(hash(path)) % (2**63),
         "parent_inode_id": abs(hash(os.path.dirname(path))) % (2**63),

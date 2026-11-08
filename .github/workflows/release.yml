@@ -9,42 +9,9 @@ permissions:
   id-token: write
 
 jobs:
-  # --- Build one wheel per Linux architecture ---
-  wheels:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install build dependencies
-        # ziglang provides `zig cc`, which cross-compiles pwalk2 against
-        # glibc 2.17 so the manylinux_2_17 wheel runs on old distros too.
-        run: |
-          sudo apt-get update && sudo apt-get install -y make
-          pip install build ziglang
-
-      - name: Build platform wheel
-        run: python -m build --wheel
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.arch }}
-          path: dist/*.whl
-
-  # --- Build sdist (architecture-independent, once) ---
-  sdist:
+  # ducl is pure Python: the filesystem walker (bvm) comes prebuilt in the
+  # quiver-tools dependency's manylinux wheel, so one wheel + sdist covers everything.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,60 +24,25 @@ jobs:
       - name: Install build dependencies
         run: pip install build
 
-      - name: Build sdist
-        run: python -m build --sdist
+      - name: Build wheel and sdist
+        run: python -m build
 
-      - name: Upload sdist artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sdist
-          path: dist/*.tar.gz
+          name: dist
+          path: dist/*
 
-  # --- Publish all wheels + sdist to PyPI ---
   publish:
-    needs: [wheels, sdist]
+    needs: [build]
     runs-on: ubuntu-latest
     environment: release
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          name: dist
           path: dist/
-          merge-multiple: true
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-  # --- Attach standalone pwalk2 binaries to GitHub release ---
-  binary:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y make
-          pip install ziglang
-
-      - name: Build pwalk2 binary
-        run: make -C src/ducl/pwalk2 pwalk2
-
-      - name: Rename binary with arch suffix
-        run: cp src/ducl/pwalk2/pwalk2 pwalk2-linux-${{ matrix.arch }}
-
-      - name: Upload pwalk2 binary to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: pwalk2-linux-${{ matrix.arch }}

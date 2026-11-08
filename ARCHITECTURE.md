@@ -4,8 +4,9 @@
 into an interactive, browser-based treemap dashboard. The design splits cleanly
 across three languages, each doing what it is best at:
 
-- **C** — the hot metadata-listing loop (`pwalk2`): walk a POSIX tree and emit
-  one CSV row per file/dir as fast as the filesystem allows.
+- **C** — the hot metadata-listing loop: quiver's `bvm` executor (from the
+  `quiver-tools` package) walks a POSIX tree and streams one Arrow STAT batch
+  per directory chunk as fast as the filesystem allows.
 - **Python** — orchestration, format conversion, aggregation, and the dashboard
   *build* (tree pruning, cube, examples). Glue and data engineering.
 - **JavaScript** (in a single static HTML file) — the *frontend*: load the
@@ -16,12 +17,12 @@ plus two Parquet sidecars), so every source and every consumer is decoupled.
 
 ```
                       ┌─────────────── sources ───────────────┐
-  POSIX filesystem ──▶│ pwalk2 (C)  ── CSV ──▶ feather_from_   │
-  (local / WekaFS)    │                        csv_stream (Py) │
+  POSIX filesystem ──▶│ bvm (C, quiver) ── Arrow ──▶ quiverscan │
+  (local / WekaFS)    │                  .to_ducl_frame (Py)    │
                       │                                        │
   S3 / S3-compatible ─│ boto3 list_objects (Py) ───────────────│──▶  <name>.feather   (Arrow IPC, zstd)
                       │                                        │     <name>.agg.parquet     (sidecar)
-  Modal volumes ──────│ Modal job: pwalk2 (C) on mounted vol,  │     <name>.examples.parquet (sidecar)
+  Modal volumes ──────│ Modal job: bvm (C) on mounted volume,  │     <name>.examples.parquet (sidecar)
                       │ returns feather bytes (Py orchestrates) │
                       └────────────────────────────────────────┘
                                           │
@@ -40,11 +41,13 @@ plus two Parquet sidecars), so every source and every consumer is decoupled.
 
 ---
 
-## 1. The C core: `pwalk2`
+## 1. The C core: quiver's `bvm`
 
-Location: `src/ducl/pwalk2/` (`pwalk2.c`, `pw2_worker.c`, `pw2_output.c`,
-`pw2_uring.h`). Compiled to a single static-ish binary at install time by the
-hatch build hook (`hatch_build.py`), shipped inside the platform wheel.
+ducl no longer carries its own walker. It depends on
+[`quiver-tools`](https://pypi.org/project/quiver-tools/), whose `bvm` executor
+ships prebuilt inside its manylinux wheel (linked against nothing but glibc, so
+`pip install ducl` is the whole install). ducl drives it through
+`quiver.exec.blocks._Bvm` over a pipe.
 
 **Why C:** listing tens of millions of files is bound by metadata-syscall
 latency, not by per-row computation. The walker has to keep a network
@@ -52,35 +55,24 @@ filesystem's metadata path saturated, which means many `statx`/`getdents64`
 calls in flight at once with minimal overhead — exactly where C + raw syscalls
 beat a managed runtime.
 
-**What it does (all in C):**
+**What ducl uses (bvm's `SCAN_DIRS` mode):**
 
-- **Threaded work queue** (`pwalk2.c`): a pool of worker threads (default 64)
-  pulls directories off a shared queue; subdirectories discovered during a walk
-  are pushed back on. A watchdog thread interrupts workers stuck >30 s in
-  `open()`/`getdents64()` on a flaky mount.
-- **Pipelined listing + stat** (`pw2_worker.c`): each worker double-buffers —
-  while `io_uring` runs a batch of `statx` calls for directory *A*, it issues
-  `getdents64` for directory *B*. This overlaps the two dominant sources of
-  network metadata latency. Memory is bounded to ~2×ring_depth entries per
-  worker.
-- **io_uring `statx`** (`pw2_uring.h`): a header-only, dependency-free wrapper
-  around raw `io_uring` syscalls (`IORING_OP_STATX`, kernel 5.15+). If
-  `io_uring_setup` fails (e.g. under gVisor in a Modal container), each worker
-  **falls back to synchronous `statx`** automatically — slower but fully
-  correct.
-- **CSV emission** (`pw2_output.c`): formats each entry into the canonical
-  17-column CSV and writes it to stdout with its own output buffering. The C
-  side also computes the per-directory rollups `pw_fcount` (direct child count)
-  and `pw_dirsum` (sum of direct children's sizes), so directory rows carry real
-  totals for free.
+- **Walker pool**: N walkers (ducl asks for 128 — the cheap end of the WEKA
+  plateau) pull directories off a shared queue and push discovered
+  subdirectories back on.
+- **io_uring `statx`**, opened lazily per walker and only for directories with
+  enough children to be worth a submit. If the ring cannot be created (e.g.
+  under gVisor in a Modal container) the walker falls back to synchronous stat.
+- **Arrow out**: each walker flushes STAT batches of complete directories —
+  `[dir row][its children]` — so `child_count` and `dir_total_size` arrive
+  already computed on the directory row, and no consumer has to hold the whole
+  table to aggregate. Every row carries `err` (0 or `-errno`) so unreadable
+  directories are counted in the stream instead of silently dropped.
 
-**Interface:** `pwalk2 [--threads N] [--depth N] [--one-file-system] <dir>` →
-headerless CSV on stdout, 17 columns:
-`inode, parent_inode, depth, "path", "ext", uid, gid, size, dev, blocks, nlink,
-"mode", atime, mtime, ctime, pw_fcount, pw_dirsum`.
-
-C does **no** aggregation, extension normalization, tree building, or I/O to the
-final format — it is purely "directory tree → CSV rows, as fast as possible".
+`quiverscan.py` projects those batches onto ducl's 17-column table (paths made
+absolute, `mode` rendered as `%07o`, nanosecond times to seconds, `depth`
+shifted by one) — the same table ducl's original C walker, `pwalk2`, produced,
+validated column for column before pwalk2 was removed in 0.3.0.
 
 ---
 
@@ -102,11 +94,13 @@ children).
 Three scanners, all producing the *identical* schema so the rest of the system
 doesn't care where data came from:
 
-- **Filesystem** — `scan.py`. Spawns the `pwalk2` C binary and pipes its CSV
-  stdout into `feather_from_csv_stream()`, which streams PyArrow `RecordBatch`es
-  straight to a zstd-compressed Arrow IPC ("Feather") file. As batches flow by
-  it also builds the aggregation sidecars (see below). This is the
-  **C→Python boundary**: C produces CSV bytes, Python parses/writes/aggregates.
+- **Filesystem** — `quiverscan.py` + `scan.py`. `stream_batches()` opens bvm,
+  coalesces its small per-directory batches to ~1M rows, and projects them onto
+  ducl's schema; `feather_from_batches()` in `scan.py` streams the result to a
+  zstd-compressed Arrow IPC ("Feather") file, building the aggregation sidecars
+  as batches flow by, and writes every output atomically (temp name + rename).
+  This is the **C→Python boundary**: C produces Arrow batches, Python
+  projects/writes/aggregates.
 - **S3 / S3-compatible** — `s3scan.py`. No C at all: a multiprocessing pool of
   Python workers paginates `list_objects_v2` across discovered prefixes,
   converts object listings into the same `RecordBatch` shape, and synthesizes
@@ -114,7 +108,7 @@ doesn't care where data came from:
   `scan_all_buckets()` loops every bucket and concatenates, prefixing each path
   with `/<bucket>`.
 - **Modal volumes** — `modaljob.py`. Fans out **one Modal job per volume**; each
-  job mounts its volume and runs `ducl scan` (i.e. the **C** `pwalk2`) on the
+  job mounts its volume and runs `ducl scan` (i.e. bvm) on the
   POSIX mount, then returns the compact feather bytes directly to the parent.
   Python on the parent side strips the mount prefix and concatenates per-volume
   results into one capture. So here C runs *inside* Modal containers and Python
@@ -159,7 +153,7 @@ incrementally rebuilds one subtree.
 ### CLI — `cli.py`
 Click entry point: `scan` (`--s3` / `--modal`, with no PATH = "all
 buckets/volumes"; `--collapse REGEX` repeatable), `dashboard`, `diff`, `update`,
-`query`, and a passthrough `pwalk2`.
+and `query`.
 
 ---
 
@@ -199,9 +193,9 @@ No data leaves the browser; there is no server-side component at render time.
 
 | Concern                                   | Language | Where |
 |-------------------------------------------|----------|-------|
-| Walk a POSIX tree, `statx`/`getdents64`   | **C**    | `pwalk2/` |
-| Per-dir child count + size rollup         | **C**    | `pw2_output.c` |
-| CSV → Feather, streaming write            | Python   | `scan.py` |
+| Walk a POSIX tree, `statx`/`getdents64`   | **C**    | quiver-tools `bvm` |
+| Per-dir child count + size rollup         | **C**    | bvm `SCAN_DIRS` |
+| Arrow projection → Feather, streaming write | Python | `quiverscan.py`, `scan.py` |
 | S3 listing + synthetic dirs               | Python   | `s3scan.py` |
 | Modal fan-out / mount / merge (runs C)    | Python   | `modaljob.py` |
 | Extension normalization, size binning     | Python   | `ext.py`, `agg.py` |
@@ -211,5 +205,5 @@ No data leaves the browser; there is no server-side component at render time.
 | Load Parquet in-browser, treemap, filters  | JS       | `dashboard.html` |
 
 **One-line summary:** C lists the filesystem as fast as the hardware allows and
-hands Python raw CSV; Python converts, aggregates, and carves the data into a
+hands Python Arrow batches; Python converts, aggregates, and carves the data into a
 compact pre-cut cube; the browser just loads that cube and draws it.

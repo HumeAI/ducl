@@ -5,8 +5,8 @@ a sequential executor: the executor applies actions out of order within each
 epoch, so correctness comes only from the epoch/barrier ordering -- exactly the
 property a real parallel (io_uring/thread-pool) executor would need.
 
-  SCANNER   streams record *batches* (Polars frames) as it walks, like pwalk2
-            emitting CSV -> PyArrow RecordBatches. A subtree-complete marker
+  SCANNER   streams record *batches* (Polars frames) as it walks, like bvm
+            emitting Arrow STAT batches. A subtree-complete marker
             (kind == "ENDDIR") is emitted in-band after a directory's whole
             subtree has streamed.
 

@@ -28,6 +28,9 @@ ducl scan /mnt/data -o scan.feather --sudo
 # Scan an S3 bucket
 ducl scan my-bucket -o bucket.feather --s3
 
+# Scan with quiver's Arrow-native walker instead of pwalk2 (pip install 'ducl[quiver]')
+ducl scan /mnt/data -o scan.feather --scanner quiver
+
 # Build dashboard from existing Feather
 ducl dashboard scan.feather ./output/
 

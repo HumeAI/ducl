@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 s3 = ["boto3>=1.28"]
+quiver = ["quiver-tools>=0.1"]   # --scanner quiver: Arrow-native walker (bvm)
 dev = ["pytest>=7.0", "boto3>=1.28"]
 
 [project.scripts]

@@ -150,23 +150,15 @@ def to_ducl_frame(df: pl.DataFrame, root: str) -> pl.DataFrame:
 _COALESCE_ROWS = 1 << 20
 
 
-QUIVER_SRC = "/mnt/weka/jpc/src/quiver"   # fallback when quiver isn't installed
-
-
 def _import_blocks():
-    """quiver.exec.blocks: an installed quiver first, else the cluster checkout."""
+    """quiver.exec.blocks from the installed quiver-tools package (ducl's [quiver] extra)."""
     try:
         from quiver.exec import blocks
-    except ImportError:
-        if QUIVER_SRC not in sys.path:
-            sys.path.insert(0, QUIVER_SRC)
-        try:
-            from quiver.exec import blocks
-        except ImportError as e:
-            raise RuntimeError(
-                "--scanner quiver needs the quiver package (not importable, and "
-                f"{QUIVER_SRC} is not available here). Use the default pwalk2 scanner."
-            ) from e
+    except ImportError as e:
+        raise RuntimeError(
+            "--scanner quiver needs the quiver-tools package: pip install 'ducl[quiver]' "
+            "(or use the default pwalk2 scanner)."
+        ) from e
     return blocks
 
 

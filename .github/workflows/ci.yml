@@ -20,9 +20,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc make
-
       - name: Install package (editable, with dev extras)
         run: pip install -e ".[dev]"
 

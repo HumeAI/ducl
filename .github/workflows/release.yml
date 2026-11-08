@@ -9,9 +9,10 @@ permissions:
   id-token: write
 
 jobs:
-  pypi:
+  # ducl is pure Python: the filesystem walker (bvm) comes prebuilt in the
+  # quiver-tools dependency's manylinux wheel, so one wheel + sdist covers everything.
+  build:
     runs-on: ubuntu-latest
-    environment: release
     steps:
       - uses: actions/checkout@v4
 
@@ -21,28 +22,27 @@ jobs:
           python-version: "3.12"
 
       - name: Install build dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc make
-          pip install build
+        run: pip install build
 
       - name: Build wheel and sdist
         run: python -m build
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-  binary:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc make
-
-      - name: Build pwalk2 binary
-        run: make -C src/ducl/pwalk2 pwalk2
-
-      - name: Upload pwalk2 binary to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: src/ducl/pwalk2/pwalk2

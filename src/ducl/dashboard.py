@@ -67,17 +67,21 @@ def load_example_candidates(path: str | Path) -> pl.DataFrame:
 
 
 def detect_root(files_df: pl.DataFrame) -> tuple[str, int]:
-    """Detect root path from files -- shallowest directory by slash count.
+    """Detect root path from files -- longest common prefix of all paths.
 
     Returns (root_path, root_n_parts).
     """
-    min_nc = files_df["n_components"].min()
-    # Root path = prefix with fewest components from any file
-    sample_path = files_df.filter(pl.col("n_components") == min_nc)["path"][0]
-    # The root is the directory portion with min_nc - 1 components
-    parts = sample_path.split("/")
-    root_path = "/".join(parts[: min_nc - 1])
-    root_n_parts = len(root_path.split("/"))
+    # LCP of lexicographic min and max equals LCP of all paths
+    min_path = files_df["path"].min()
+    max_path = files_df["path"].max()
+    common: list[str] = []
+    for a, b in zip(min_path.split("/"), max_path.split("/")):
+        if a == b:
+            common.append(a)
+        else:
+            break
+    root_path = "/".join(common)
+    root_n_parts = len(common)
     return root_path, root_n_parts
 
 
@@ -613,8 +617,14 @@ def build(
     top_n_extensions: int = TOP_N_EXTENSIONS,
     top_n_folders: int = TOP_N_FOLDERS,
     examples_per_bin: int = EXAMPLES_PER_BIN,
+    collapse_rules: list[str] | None = None,
 ) -> None:
-    """Full build: Feather -> tree.parquet + cube.parquet + examples.parquet + meta.json."""
+    """Full build: Feather -> tree.parquet + cube.parquet + examples.parquet + meta.json.
+
+    ``collapse_rules`` is a list of regexes whose capture groups mark the folder-
+    name parts to collapse to ``*`` (date-stamped, numbered, ...), grouping them
+    before the tree/cube/folder aggregation -- see :mod:`ducl.foldernorm`.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -640,6 +650,17 @@ def build(
         files_df = load_files(input_file)
         example_candidates = None
         log(f"  {files_df.height:,} files")
+
+    if collapse_rules:
+        from .foldernorm import normalize_columns
+        files_df = normalize_columns(
+            files_df, collapse_rules, path_cols=("path",), component_cols=("leaf_folder",)
+        )
+        if example_candidates is not None:
+            example_candidates = normalize_columns(
+                example_candidates, collapse_rules, path_cols=("dir_path",)
+            )
+        log(f"  applied {len(collapse_rules)} folder-collapse rule(s)")
 
     root_path, root_n_parts = detect_root(files_df)
     log(f"  root: {root_path}")
@@ -685,29 +706,17 @@ def build(
     # 7. Write outputs
     log("Writing outputs...")
 
-    # tree.parquet
     tree_df = pl.DataFrame([
         {"node_id": n["id"], "parent": n["parent"], "name": n["name"], "size": n["size"]}
         for n in pruned_nodes
     ]).cast({"size": pl.Int64})
-    tree_df.write_parquet(str(output_dir / "tree.parquet"))
 
-    # cube.parquet
-    cube_df.write_parquet(str(output_dir / "cube.parquet"))
-
-    # examples.parquet
-    examples_df.write_parquet(str(output_dir / "examples.parquet"))
-
-    # meta.json
     meta = {
         "hist_labels": hist_labels(),
         "extensions": top_ext_df.to_dicts(),
         "leaf_folders": top_folder_df.to_dicts(),
     }
-    with open(output_dir / "meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
 
-    # Dashboard HTML + JSON (for browser)
     _export_dashboard_data(output_dir, tree_df, cube_df, examples_df, meta)
 
     log("Done!")
@@ -733,10 +742,11 @@ def update(
 
     # 1. Load existing data
     log("Loading existing dashboard...")
-    tree_df = pl.read_parquet(str(dashboard_dir / "tree.parquet"))
-    cube_df = pl.read_parquet(str(dashboard_dir / "cube.parquet"))
-    examples_df = pl.read_parquet(str(dashboard_dir / "examples.parquet"))
-    with open(dashboard_dir / "meta.json") as f:
+    data_dir = dashboard_dir / "dashboard_data"
+    tree_df = pl.read_parquet(str(data_dir / "tree.parquet"))
+    cube_df = pl.read_parquet(str(data_dir / "cube.parquet"))
+    examples_df = pl.read_parquet(str(data_dir / "examples.parquet"))
+    with open(data_dir / "meta.json") as f:
         meta = json.load(f)
 
     tree_by_id = {row["node_id"]: row for row in tree_df.to_dicts()}
@@ -899,15 +909,7 @@ def update(
         {"node_id": nid, "parent": v["parent"], "name": v["name"], "size": v["size"]}
         for nid, v in tree_by_id.items()
     ]).cast({"size": pl.Int64})
-    tree_out.write_parquet(str(dashboard_dir / "tree.parquet"))
 
-    cube_df.write_parquet(str(dashboard_dir / "cube.parquet"))
-    examples_df.write_parquet(str(dashboard_dir / "examples.parquet"))
-
-    with open(dashboard_dir / "meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
-
-    # Dashboard HTML + JSON (for browser)
     _export_dashboard_data(dashboard_dir, tree_out, cube_df, examples_df, meta)
 
     log("Done!")

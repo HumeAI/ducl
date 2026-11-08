@@ -295,7 +295,7 @@ stat_entries_sync(struct pw2_worker *w, int dirfd,
     (void)w;
     for (int i = 0; i < count; i++) {
         struct statx *stx = &entries[i].stx;
-        if (statx(dirfd, entries[i].name, AT_SYMLINK_NOFOLLOW,
+        if (pw2_statx(dirfd, entries[i].name, AT_SYMLINK_NOFOLLOW,
                   PW2_STATX_MASK, stx) == 0) {
             entries[i].stx_valid = 1;
             if (entries[i].d_type == DT_UNKNOWN)

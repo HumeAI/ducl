@@ -325,7 +325,7 @@ main(int argc, char *argv[])
         fprintf(stderr, "unable to setuid root; not all files may be processed\n");
 
     /* Stat the root directory */
-    if (statx(AT_FDCWD, *argv, AT_SYMLINK_NOFOLLOW, PW2_STATX_MASK, &root_stx) < 0) {
+    if (pw2_statx(AT_FDCWD, *argv, AT_SYMLINK_NOFOLLOW, PW2_STATX_MASK, &root_stx) < 0) {
         fprintf(stderr, "%s: statx '%s': %s\n", whoami, *argv, strerror(errno));
         exit(errno);
     }

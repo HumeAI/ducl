@@ -11,9 +11,25 @@
 #include <signal.h>
 #include <limits.h>
 #include <sys/types.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <linux/stat.h>   /* struct statx */
 
 #include "pw2_uring.h"
+
+#ifndef __NR_statx
+#error "__NR_statx not defined: kernel headers too old (need Linux >= 4.11 uapi)"
+#endif
+
+/* statx(2) via raw syscall.  The glibc wrapper only exists since 2.28;
+ * calling the kernel directly lets the binary run on any glibc (we build
+ * against glibc 2.17 for manylinux_2_17 wheels). Kernel >= 4.11 needed. */
+static inline int
+pw2_statx(int dirfd, const char *path, int flags, unsigned mask,
+          struct statx *stx)
+{
+    return (int)syscall(__NR_statx, dirfd, path, flags, mask, stx);
+}
 
 /* Defaults */
 #define PW2_DEFAULT_THREADS   64

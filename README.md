@@ -11,6 +11,9 @@ pip install -e ".[dev]"     # development (editable + pytest)
 ```
 
 On Linux the bundled **pwalk2** C binary is compiled automatically at install time.
+If `zig` is available (`pip install ziglang` is enough) it is cross-compiled against
+glibc 2.17, so the resulting wheel runs on any distro since CentOS 7 / Ubuntu 14.04.
+Without zig the host `gcc` is used and the binary requires the build host's glibc or newer.
 
 ## Usage
 

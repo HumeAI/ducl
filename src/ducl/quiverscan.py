@@ -150,21 +150,61 @@ def to_ducl_frame(df: pl.DataFrame, root: str) -> pl.DataFrame:
 _COALESCE_ROWS = 1 << 20
 
 
+QUIVER_SRC = "/mnt/weka/jpc/src/quiver"   # fallback when quiver isn't installed
+
+
+def _import_blocks():
+    """quiver.exec.blocks: an installed quiver first, else the cluster checkout."""
+    try:
+        from quiver.exec import blocks
+    except ImportError:
+        if QUIVER_SRC not in sys.path:
+            sys.path.insert(0, QUIVER_SRC)
+        try:
+            from quiver.exec import blocks
+        except ImportError as e:
+            raise RuntimeError(
+                "--scanner quiver needs the quiver package (not importable, and "
+                f"{QUIVER_SRC} is not available here). Use the default pwalk2 scanner."
+            ) from e
+    return blocks
+
+
+def _open_bvm(blocks, bvm_exe: str | None, nworkers: int, launch: list[str] | None):
+    """blocks._Bvm(...) across quiver versions: older _Bvm have neither qmax nor launch."""
+    import inspect
+    params = inspect.signature(blocks._Bvm.__init__).parameters
+    kw: dict = {}
+    # BOUNDED reader queue. Unbounded, the walkers outrun the projection + zstd + agg below
+    # and the backlog is the scan: the full mount OOMed at 344 GB, 183M rows in. Safe here
+    # because after scan_dirs this loop only reads -- nothing waits on a send.
+    if "qmax" in params:
+        kw["qmax"] = 256
+    else:
+        print("quiverscan: this quiver's _Bvm has no qmax (bounded reader queue); "
+              "very large scans may run out of memory -- update quiver",
+              file=sys.stderr)
+    if launch:
+        if "launch" not in params:
+            raise RuntimeError("--sudo with --scanner quiver needs a quiver whose _Bvm "
+                               "accepts launch=; update quiver or use the pwalk2 scanner")
+        kw["launch"] = list(launch)
+    return blocks._Bvm(bvm_exe or blocks.default_bvm(), nworkers, **kw)
+
+
 def stream_batches(root: str, nworkers: int = 128, bvm_exe: str | None = None,
-                   progress: bool = True):
+                   progress: bool = True, launch: list[str] | None = None):
     """Yield ducl-schema Arrow RecordBatches as bvm's walker produces them.
 
     This is the whole scanner as far as any consumer is concerned: a differ that wants
     directory chunks can read the same stream and split on `child_count >= 0` (a dir row) --
     each such row is followed by exactly its `child_count` children.
-    """
-    sys.path.insert(0, "/mnt/weka/jpc/src/quiver")
-    from quiver.exec import blocks
 
-    # BOUNDED reader queue. Unbounded, the walkers outrun the projection + zstd + agg below
-    # and the backlog is the scan: the full mount OOMed at 344 GB, 183M rows in. Safe here
-    # because after scan_dirs this loop only reads -- nothing waits on a send.
-    b = blocks._Bvm(bvm_exe or blocks.default_bvm(), nworkers, qmax=256)
+    *launch* is a command prefix for the bvm executor, e.g. ``["sudo", "--"]`` to run only
+    the walker as root while this process stays unprivileged.
+    """
+    blocks = _import_blocks()
+    b = _open_bvm(blocks, bvm_exe, nworkers, launch)
     b.scan_dirs(0, root)
     rows, last, held, nheld = 0, 0, [], 0
     nerr = collections.Counter()
@@ -220,8 +260,11 @@ def stream_batches(root: str, nworkers: int = 128, bvm_exe: str | None = None,
 
 
 def scan_filesystem_quiver(path: str, output: str, *, do_agg: bool = True,
-                           nworkers: int = 128, bvm_exe: str | None = None) -> None:
+                           nworkers: int = 128, bvm_exe: str | None = None,
+                           sudo: bool = False) -> None:
     """Scan *path* with quiver's walker and write ducl's Feather (+ agg sidecars).
+
+    *sudo* elevates only the bvm walker (``sudo -- bvm ...``); output stays ours.
 
     128 is the cheap end of the plateau: wall time is flat from 128 to 1024 walkers
     (0.89/0.80/0.87/0.89 s on 233k entries) while readdir blocking doubles with every doubling
@@ -231,4 +274,6 @@ def scan_filesystem_quiver(path: str, output: str, *, do_agg: bool = True,
     from .scan import feather_from_batches
 
     root = os.path.abspath(path)
-    feather_from_batches(stream_batches(root, nworkers, bvm_exe), output, do_agg=do_agg)
+    launch = ["sudo", "--"] if sudo else None
+    feather_from_batches(stream_batches(root, nworkers, bvm_exe, launch=launch),
+                         output, do_agg=do_agg)

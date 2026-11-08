@@ -21,6 +21,10 @@ Without zig the host `gcc` is used and the binary requires the build host's glib
 # Scan a filesystem → Feather file + dashboard
 ducl scan /mnt/data -o scan.feather
 
+# Same, but let the walker read every directory: only the pwalk2 child runs
+# under sudo; ducl and the files it writes stay under your user
+ducl scan /mnt/data -o scan.feather --sudo
+
 # Scan an S3 bucket
 ducl scan my-bucket -o bucket.feather --s3
 
@@ -33,7 +37,7 @@ ducl update ./output/ subtree.feather
 # Query scan data
 ducl query scan.feather --under /mnt/data/models/ --ext wav --top 10
 
-# Run bundled pwalk2 directly
+# Run bundled pwalk2 directly (add --sudo to elevate it)
 ducl pwalk2 /mnt/data --threads 64
 ```
 

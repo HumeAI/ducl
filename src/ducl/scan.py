@@ -7,6 +7,7 @@ Provides ``feather_from_csv_stream`` (generic stdin/pipe reader) and
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -157,6 +158,40 @@ def feather_from_batches(batches, output: str, *, do_agg: bool = True) -> None:
         )
 
 
+def pwalk2_command(
+    path: str,
+    *,
+    pwalk2_args: list[str] | None = None,
+    sudo: bool = False,
+    binary: Path | None = None,
+) -> list[str]:
+    """argv for running the bundled pwalk2 on *path*.
+
+    With ``sudo=True`` only the walker is elevated (``sudo -- pwalk2 ...``);
+    this Python process, and therefore the output files it writes, stay
+    under the invoking user. Without root pwalk2 can only stat what the
+    user may read and prints "unable to setuid root" -- a scan of a shared
+    mount silently misses other users' private directories.
+    """
+    binary = binary or _pwalk2_binary()
+    if not binary.exists():
+        raise FileNotFoundError(
+            f"pwalk2 binary not found at {binary}. "
+            "pwalk2 requires Linux and is compiled at install time."
+        )
+    cmd: list[str] = []
+    if sudo:
+        if shutil.which("sudo") is None:
+            raise FileNotFoundError("--sudo requested but no `sudo` on PATH")
+        # `--` so pwalk2's own options (--threads ...) are never parsed by sudo.
+        cmd += ["sudo", "--"]
+    cmd.append(str(binary))
+    if pwalk2_args:
+        cmd.extend(pwalk2_args)
+    cmd.append(path)
+    return cmd
+
+
 def scan_filesystem(
     path: str,
     output: str,
@@ -164,19 +199,14 @@ def scan_filesystem(
     do_agg: bool = True,
     block_size: int = 256 << 20,
     pwalk2_args: list[str] | None = None,
+    sudo: bool = False,
 ) -> None:
-    """Run the bundled pwalk2 on *path* and pipe output to feather writer."""
-    binary = _pwalk2_binary()
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"pwalk2 binary not found at {binary}. "
-            "pwalk2 requires Linux and is compiled at install time."
-        )
+    """Run the bundled pwalk2 on *path* and pipe output to feather writer.
 
-    cmd = [str(binary)]
-    if pwalk2_args:
-        cmd.extend(pwalk2_args)
-    cmd.append(path)
+    *sudo* runs just the pwalk2 child as root (see :func:`pwalk2_command`);
+    sudo prompts for a password on the controlling tty if it needs one.
+    """
+    cmd = pwalk2_command(path, pwalk2_args=pwalk2_args, sudo=sudo)
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     try:

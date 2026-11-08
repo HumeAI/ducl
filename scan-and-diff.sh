@@ -65,7 +65,7 @@ if ! is_complete_feather "${NEW_BASE}.feather"; then
         mv "${NEW_BASE}.feather" "${NEW_BASE}-truncated.feather"
     fi
     srun --partition=cpu -c 24 --job-name interactive --pty \
-        sudo "$DUCL" scan --scanner quiver -o "${NEW_BASE}.feather" /mnt/weka/
+        "$DUCL" scan --scanner quiver --sudo -o "${NEW_BASE}.feather" /mnt/weka/
 else
     echo ">>> ${NEW_BASE}.feather already exists, skipping scan"
 fi

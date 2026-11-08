@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pytest
 
-from ducl.scan import feather_from_csv_stream
+from ducl.scan import feather_from_csv_stream, pwalk2_command
 from ducl.schema import SCHEMA, COLUMN_NAMES
 
 
@@ -120,3 +120,48 @@ def test_feather_from_batches_atomic(tmp_path: Path):
     with pytest.raises(MemoryError):
         feather_from_batches(batches(1), str(bad), do_agg=False)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["ok.feather"]
+
+
+def test_pwalk2_command_sudo(tmp_path: Path, monkeypatch):
+    """--sudo prefixes only the walker with `sudo --`; nothing else changes."""
+    import ducl.scan as scan_mod
+
+    fake = tmp_path / "pwalk2"
+    fake.write_text("")
+    monkeypatch.setattr(scan_mod.shutil, "which", lambda name: "/usr/bin/sudo")
+
+    plain = pwalk2_command("/data", pwalk2_args=["--threads", "8"], binary=fake)
+    assert plain == [str(fake), "--threads", "8", "/data"]
+
+    elevated = pwalk2_command("/data", pwalk2_args=["--threads", "8"], sudo=True, binary=fake)
+    assert elevated == ["sudo", "--"] + plain
+
+    monkeypatch.setattr(scan_mod.shutil, "which", lambda name: None)
+    with pytest.raises(FileNotFoundError, match="sudo"):
+        pwalk2_command("/data", sudo=True, binary=fake)
+
+
+def test_open_bvm_feature_detection():
+    """Older quivers lack qmax/launch: skip qmax with a warning, refuse launch clearly."""
+    from types import SimpleNamespace
+    from ducl.quiverscan import _open_bvm
+
+    calls = []
+
+    class NewBvm:
+        def __init__(self, exe, nworkers=16, budget_mb=512, launch=None, sock=None, qmax=0):
+            calls.append((exe, nworkers, launch, qmax))
+
+    class OldBvm:
+        def __init__(self, exe, nworkers=16, budget_mb=512):
+            calls.append((exe, nworkers))
+
+    new = SimpleNamespace(_Bvm=NewBvm, default_bvm=lambda: "/bvm")
+    _open_bvm(new, None, 8, ["sudo", "--"])
+    assert calls[-1] == ("/bvm", 8, ["sudo", "--"], 256)
+
+    old = SimpleNamespace(_Bvm=OldBvm, default_bvm=lambda: "/bvm")
+    _open_bvm(old, "/my/bvm", 4, None)
+    assert calls[-1] == ("/my/bvm", 4)
+    with pytest.raises(RuntimeError, match="launch"):
+        _open_bvm(old, None, 4, ["sudo", "--"])

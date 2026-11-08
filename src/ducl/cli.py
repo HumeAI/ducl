@@ -26,6 +26,9 @@ def cli():
 @click.option("--scanner", type=click.Choice(["pwalk2", "quiver"]), default="pwalk2",
               help="Filesystem walker: bundled pwalk2 (CSV) or quiver's bvm (Arrow direct)")
 @click.option("--bvm", "bvm_exe", help="quiver bvm binary (default: quiver's own)")
+@click.option("--sudo", "use_sudo", is_flag=True,
+              help="Run only the walker (pwalk2 or quiver's bvm) under sudo so it can read "
+                   "every directory; ducl itself and the output files stay under your user")
 @click.option("-w", "--workers", type=int, default=None, help="S3 listing threads (default 32) / Modal concurrent streams (default 8)")
 @click.option("--discover-depth", type=int, default=2, help="S3 prefix discovery depth")
 @click.option("--endpoint-url", help="S3-compatible endpoint")
@@ -38,13 +41,15 @@ def cli():
                    "with '*' (the rest is kept). Repeatable. "
                    r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
 def scan(path, output, use_s3, use_modal,
-         no_agg, no_dashboard, block_size, scanner, bvm_exe, workers,
+         no_agg, no_dashboard, block_size, scanner, bvm_exe, use_sudo, workers,
          discover_depth, endpoint_url, profile, region, environment, max_objects, collapse):
     """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
 
     if use_s3 and use_modal:
         raise click.UsageError("--s3 and --modal are mutually exclusive")
+    if use_sudo and (use_s3 or use_modal):
+        raise click.UsageError("--sudo only applies to local filesystem scans")
     if not (use_modal or use_s3) and not path:
         raise click.UsageError(
             "PATH is required (omit it only with --modal/--s3 to scan all volumes/buckets)"
@@ -99,10 +104,10 @@ def scan(path, output, use_s3, use_modal,
         # against pwalk2 on three trees (see quiverscan.to_ducl_frame).
         from .quiverscan import scan_filesystem_quiver
         scan_filesystem_quiver(path, output, do_agg=do_agg,
-                               nworkers=workers or 128, bvm_exe=bvm_exe)
+                               nworkers=workers or 128, bvm_exe=bvm_exe, sudo=use_sudo)
     else:
         from .scan import scan_filesystem
-        scan_filesystem(path, output, do_agg=do_agg, block_size=block_size)
+        scan_filesystem(path, output, do_agg=do_agg, block_size=block_size, sudo=use_sudo)
 
     if not no_dashboard and os.path.exists(output):
         out_dir = Path(output).parent / (Path(output).stem + "_dashboard")
@@ -169,8 +174,9 @@ def query(feather, **kwargs):
         allow_extra_args=True,
     ),
 )
+@click.option("--sudo", "use_sudo", is_flag=True, help="Run pwalk2 under sudo")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def pwalk2_cmd(args):
+def pwalk2_cmd(use_sudo, args):
     """Run the bundled pwalk2 binary (all arguments forwarded)."""
     binary = Path(__file__).parent / "pwalk2" / "pwalk2"
     if not binary.exists():
@@ -180,4 +186,7 @@ def pwalk2_cmd(args):
             err=True,
         )
         sys.exit(1)
-    os.execvp(str(binary), [str(binary)] + list(args))
+    argv = [str(binary)] + list(args)
+    if use_sudo:
+        argv = ["sudo", "--"] + argv
+    os.execvp(argv[0], argv)

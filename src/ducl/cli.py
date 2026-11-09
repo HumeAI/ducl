@@ -22,6 +22,12 @@ def cli():
 @click.option("--modal", "use_modal", is_flag=True, help="Scan Modal volumes via per-volume Modal jobs (PATH = one volume name, or omit for all)")
 @click.option("--no-agg", is_flag=True, help="Skip sidecar aggregation")
 @click.option("--no-dashboard", is_flag=True, help="Skip automatic dashboard build")
+@click.option("--hardlinks", type=click.Choice(["split", "first", "full"]), default="split",
+              show_default=True,
+              help="How a hard-linked file's bytes are charged in the sidecars/dashboard: "
+                   "split = size/nlink to every link (deterministic); first = whole file to "
+                   "the first link met, 0 to the rest (walk-order dependent); full = whole "
+                   "file to every link (du -l, over-counts)")
 @click.option("--bvm", "bvm_exe", help="quiver bvm binary (default: the one in quiver-tools)")
 @click.option("--sudo", "use_sudo", is_flag=True,
               help="Run only the walker (quiver's bvm) under sudo so it can read "
@@ -39,7 +45,7 @@ def cli():
                    "with '*' (the rest is kept). Repeatable. "
                    r"e.g. --collapse '(\d{7,})' --collapse '.+-batch-(.*)'")
 def scan(path, output, use_s3, use_modal,
-         no_agg, no_dashboard, bvm_exe, use_sudo, workers,
+         no_agg, no_dashboard, hardlinks, bvm_exe, use_sudo, workers,
          discover_depth, endpoint_url, profile, region, environment, max_objects, collapse):
     """Scan a filesystem, S3 bucket, or Modal volume into a Feather file."""
     do_agg = not no_agg
@@ -88,6 +94,7 @@ def scan(path, output, use_s3, use_modal,
                 output=output,
                 environment=environment,
                 do_agg=do_agg,
+                hardlinks=hardlinks,
             )
         else:
             from .modaljob import scan_all_volumes_jobs
@@ -95,11 +102,13 @@ def scan(path, output, use_s3, use_modal,
                 output=output,
                 environment=environment,
                 do_agg=do_agg,
+                hardlinks=hardlinks,
             )
     else:
         from .quiverscan import scan_filesystem_quiver
         scan_filesystem_quiver(path, output, do_agg=do_agg,
-                               nworkers=workers or 128, bvm_exe=bvm_exe, sudo=use_sudo)
+                               nworkers=workers or 128, bvm_exe=bvm_exe, sudo=use_sudo,
+                               hardlinks=hardlinks)
 
     if not no_dashboard and os.path.exists(output):
         out_dir = Path(output).parent / (Path(output).stem + "_dashboard")
@@ -119,6 +128,20 @@ def dashboard(feather, output_dir, collapse):
     """Build a dashboard from a Feather scan file."""
     from .dashboard import build
     build(feather, output_dir, collapse_rules=list(collapse) or None)
+
+
+@cli.command("agg")
+@click.argument("feather")
+@click.option("--hardlinks", type=click.Choice(["split", "first", "full"]), default="split",
+              show_default=True, help="Hard-link charging policy (see `ducl scan --help`)")
+def agg_cmd(feather, hardlinks):
+    """Rebuild a capture's .agg/.examples sidecars from its Feather (no rescan).
+
+    Use it to re-cut an older capture under the current hard-link policy so that
+    `ducl diff` compares like with like; rebuild its dashboard afterwards.
+    """
+    from .scan import reaggregate
+    reaggregate(feather, hardlinks=hardlinks)
 
 
 @cli.command("update")

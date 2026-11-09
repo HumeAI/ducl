@@ -124,6 +124,17 @@ milliseconds instead of re-reading the whole feather:
 - `<name>.examples.parquet` — the top-3 largest files per `(dir_path,
   size_bin)`, for the detail panel.
 
+**Hard links.** The feather has one row per directory *entry*, each with the
+inode's full size, so a naive sum counts a file once per link. `agg.py` charges
+each entry under a policy chosen at scan time (`ducl scan --hardlinks`):
+`split` (default) charges `size // nlink` per link — stateless, deterministic,
+exact when all links are inside the scan; `first` charges the whole file to the
+first link in stream order and 0 to the rest (walk-order dependent, keeps a set
+of seen inodes); `full` charges every link in full (`du -l`, the pre-0.3.1
+behaviour). Only `total_size` changes: `file_count` counts entries, and size
+bins and examples use the real size. The feather always stores real sizes, so
+`ducl agg FEATHER` can re-cut the sidecars under another policy without a rescan.
+
 `ext.py` normalizes extensions here (lowercasing, compound `.tar.gz`, empty →
 `(no ext)`). `agg.py` is also where memory is bounded via periodic `compact_*`
 re-aggregation.
@@ -152,8 +163,8 @@ incrementally rebuilds one subtree.
 
 ### CLI — `cli.py`
 Click entry point: `scan` (`--s3` / `--modal`, with no PATH = "all
-buckets/volumes"; `--collapse REGEX` repeatable), `dashboard`, `diff`, `update`,
-and `query`.
+buckets/volumes"; `--collapse REGEX` repeatable; `--hardlinks`), `agg`,
+`dashboard`, `diff`, `update`, and `query`.
 
 ---
 

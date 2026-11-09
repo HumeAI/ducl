@@ -42,6 +42,7 @@ DEFAULT_CPU = 16.0
 DEFAULT_MEMORY_MB = 32768
 DEFAULT_TIMEOUT_S = 4 * 3600
 IMAGE_TAG = "ubuntu:24.04"
+MIN_DUCL = "ducl>=0.3.1"   # what the container pip-installs; 0.3.1 added `scan --hardlinks`
 
 
 def _safe_fn_name(volume: str) -> str:
@@ -53,14 +54,14 @@ def _safe_fn_name(volume: str) -> str:
 # App construction (one dynamically-created function per volume)
 # ---------------------------------------------------------------------------
 
-def _make_scan_impl(mount_base: str):
+def _make_scan_impl(mount_base: str, hardlinks: str):
     """Build the in-container entry point as a *nested* function.
 
     Defining it here (rather than at module level) means cloudpickle serializes
     it by value, so the Modal container -- which only has the published ``ducl``
     wheel, not this ``ducl.modaljob`` module -- can run it without importing us.
-    It must reference only stdlib and captured locals (``mount_base``), never
-    this module's globals.
+    It must reference only stdlib and captured locals (``mount_base``,
+    ``hardlinks``), never this module's globals.
     """
 
     def scan_impl(volume: str) -> dict:
@@ -70,7 +71,8 @@ def _make_scan_impl(mount_base: str):
         mount_root = f"{mount_base}/{volume}"
         out_path = f"/tmp/{volume.replace('/', '_')}.feather"
         proc = subprocess.run(
-            ["ducl", "scan", mount_root, "-o", out_path, "--no-dashboard"],
+            ["ducl", "scan", mount_root, "-o", out_path, "--no-dashboard",
+             "--hardlinks", hardlinks],
             capture_output=True, text=True,
         )
 
@@ -108,13 +110,16 @@ def _build_app(
     cpu: float,
     memory_mb: int,
     timeout_s: int,
+    hardlinks: str,
 ):
     import modal
 
     py = f"{sys.version_info.major}.{sys.version_info.minor}"  # match local (serialized fns)
-    image = modal.Image.from_registry(IMAGE_TAG, add_python=py).pip_install("ducl")
+    # Lower bound, not a bare "ducl": the container is passed --hardlinks (0.3.1+), and Modal
+    # caches the image layer by its spec, so only a changed spec replaces an older ducl.
+    image = modal.Image.from_registry(IMAGE_TAG, add_python=py).pip_install(MIN_DUCL)
     app = modal.App("ducl-volume-scan")
-    scan_impl = _make_scan_impl(_MOUNT_BASE)
+    scan_impl = _make_scan_impl(_MOUNT_BASE, hardlinks)
 
     fns = {}
     for name in volumes:
@@ -183,12 +188,14 @@ def _run_jobs(
     cpu: float,
     memory_mb: int,
     timeout_s: int,
+    hardlinks: str = "split",
 ) -> None:
     if not volumes:
         raise ValueError("no volumes to scan")
 
     app, fns = _build_app(
         volumes, environment=environment, cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s,
+        hardlinks=hardlinks,
     )
 
     print(f"Spawning {len(volumes)} Modal scan job(s)...", file=sys.stderr, flush=True)
@@ -272,11 +279,12 @@ def scan_volume_job(
     cpu: float = DEFAULT_CPU,
     memory_mb: int = DEFAULT_MEMORY_MB,
     timeout_s: int = DEFAULT_TIMEOUT_S,
+    hardlinks: str = "split",
 ) -> None:
     """Scan a single Modal volume via one Modal job."""
     _run_jobs(
         [volume], output, environment=environment, do_agg=do_agg,
-        cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s,
+        cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s, hardlinks=hardlinks,
     )
 
 
@@ -288,6 +296,7 @@ def scan_all_volumes_jobs(
     cpu: float = DEFAULT_CPU,
     memory_mb: int = DEFAULT_MEMORY_MB,
     timeout_s: int = DEFAULT_TIMEOUT_S,
+    hardlinks: str = "split",
 ) -> None:
     """Scan every visible Modal volume, one job each, into one capture."""
     print("Listing Modal volumes...", file=sys.stderr, flush=True)
@@ -295,5 +304,5 @@ def scan_all_volumes_jobs(
     print(f"  {len(names)} volumes found", file=sys.stderr, flush=True)
     _run_jobs(
         names, output, environment=environment, do_agg=do_agg,
-        cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s,
+        cpu=cpu, memory_mb=memory_mb, timeout_s=timeout_s, hardlinks=hardlinks,
     )

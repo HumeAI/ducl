@@ -24,6 +24,15 @@ ducl scan /mnt/data -o scan.feather
 # under sudo; ducl and the files it writes stay under your user
 ducl scan /mnt/data -o scan.feather --sudo
 
+# Hard-linked files: by default each link is charged size/nlink, so totals are not
+# inflated. --hardlinks first charges the whole file to the first link met instead
+# (walk-order dependent); --hardlinks full counts every link in full (du -l)
+ducl scan /mnt/data -o scan.feather --hardlinks first
+
+# Re-cut an existing capture's sidecars under a hard-link policy, without rescanning
+# (e.g. a capture made before 0.3.1, so `ducl diff` compares like with like)
+ducl agg old-scan.feather
+
 # Scan an S3 bucket
 ducl scan my-bucket -o bucket.feather --s3
 

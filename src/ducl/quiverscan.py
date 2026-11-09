@@ -252,7 +252,7 @@ def stream_batches(root: str, nworkers: int = 128, bvm_exe: str | None = None,
 
 def scan_filesystem_quiver(path: str, output: str, *, do_agg: bool = True,
                            nworkers: int = 128, bvm_exe: str | None = None,
-                           sudo: bool = False) -> None:
+                           sudo: bool = False, hardlinks: str = "split") -> None:
     """Scan *path* with quiver's walker and write ducl's Feather (+ agg sidecars).
 
     *sudo* elevates only the bvm walker (``sudo -- bvm ...``); output stays ours.
@@ -267,4 +267,4 @@ def scan_filesystem_quiver(path: str, output: str, *, do_agg: bool = True,
     root = os.path.abspath(path)
     launch = ["sudo", "--"] if sudo else None
     feather_from_batches(stream_batches(root, nworkers, bvm_exe, launch=launch),
-                         output, do_agg=do_agg)
+                         output, do_agg=do_agg, hardlinks=hardlinks)

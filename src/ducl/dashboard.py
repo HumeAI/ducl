@@ -18,6 +18,7 @@ import polars as pl
 
 from .schema import HIST_EDGES
 from .ext import normalize_ext_expr
+from .agg import DEFAULT_HARDLINKS, charged_size_expr
 
 # ---------------------------------------------------------------------------
 # Constants (overridable via kwargs in build/update for testing)
@@ -32,12 +33,20 @@ EXAMPLES_PER_BIN = 3
 N_HIST_BINS = len(HIST_EDGES) + 1  # 12
 
 
-def load_files(path: str | Path) -> pl.DataFrame:
-    """Read Feather, keep files only, normalize ext, add leaf_folder + n_components."""
+def load_files(path: str | Path, hardlinks: str = DEFAULT_HARDLINKS) -> pl.DataFrame:
+    """Read Feather, keep files only, normalize ext, add leaf_folder + n_components.
+
+    `size` is the size CHARGED to each entry under the *hardlinks* policy (see
+    agg.HARDLINK_MODES), matching what the agg sidecar fast path sums. Feathers without
+    the link columns (hand-built subsets) are taken at face value.
+    """
     lf = pl.scan_ipc(str(path))
+    cols = set(lf.collect_schema().names())
+    needs = {"split": {"nlink"}, "first": {"nlink", "fs_id", "inode_id"}, "full": set()}[hardlinks]
+    size = charged_size_expr(hardlinks) if needs <= cols else pl.col("size")
     return (
         lf.filter(pl.col("child_count") == -1)
-        .select("path", "ext", "size")
+        .select("path", "ext", size)
         .with_columns(
             (pl.col("path").str.count_matches("/") + 1).cast(pl.Int32).alias("n_components"),
             pl.col("path").str.extract(r"([^/]+)/[^/]+$").alias("leaf_folder"),

@@ -64,14 +64,14 @@ if ! is_complete_feather "${NEW_BASE}.feather"; then
         echo ">>> ${NEW_BASE}.feather is truncated, moving aside and rescanning"
         mv "${NEW_BASE}.feather" "${NEW_BASE}-truncated.feather"
     fi
-    srun --partition=cpu -c 24 --job-name interactive --pty \
+    srun --partition=gpu --gpus 1 --job-name interactive --pty \
         "$DUCL" scan --sudo -o "${NEW_BASE}.feather" /mnt/weka/
 else
     echo ">>> ${NEW_BASE}.feather already exists, skipping scan"
 fi
 
 # 2. Diff dashboard.
-srun -p cpu -c 24 \
+srun -p gpu --gpus 1 \
   "$DUCL" diff -o "${NEW_BASE}_dashboard_change/" \
       "${OLD_BASE}.feather" "${NEW_BASE}.feather"
 

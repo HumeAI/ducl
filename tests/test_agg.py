@@ -11,20 +11,24 @@ import pytest
 from conftest import EXPECTED_TOTAL_SIZE, SYNTHETIC_FILES
 
 
+def _data_dir(out_dir: Path) -> Path:
+    return out_dir / "dashboard_data"
+
+
 def _load_tree(out_dir: Path) -> pl.DataFrame:
-    return pl.read_parquet(str(out_dir / "tree.parquet"))
+    return pl.read_parquet(str(_data_dir(out_dir) / "tree.parquet"))
 
 
 def _load_cube(out_dir: Path) -> pl.DataFrame:
-    return pl.read_parquet(str(out_dir / "cube.parquet"))
+    return pl.read_parquet(str(_data_dir(out_dir) / "cube.parquet"))
 
 
 def _load_examples(out_dir: Path) -> pl.DataFrame:
-    return pl.read_parquet(str(out_dir / "examples.parquet"))
+    return pl.read_parquet(str(_data_dir(out_dir) / "examples.parquet"))
 
 
 def _load_meta(out_dir: Path) -> dict:
-    with open(out_dir / "meta.json") as f:
+    with open(_data_dir(out_dir) / "meta.json") as f:
         return json.load(f)
 
 

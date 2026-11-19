@@ -10,13 +10,28 @@ pip install ducl[s3]        # with S3 support (boto3)
 pip install -e ".[dev]"     # development (editable + pytest)
 ```
 
-On Linux the bundled **pwalk2** C binary is compiled automatically at install time.
+ducl is pure Python. The filesystem walker is `bvm` from the
+[quiver-tools](https://pypi.org/project/quiver-tools/) dependency, which ships prebuilt in
+its manylinux wheel (Linux x86_64, glibc 2.28 or newer), so nothing is compiled at install time.
 
 ## Usage
 
 ```bash
 # Scan a filesystem → Feather file + dashboard
 ducl scan /mnt/data -o scan.feather
+
+# Same, but let the walker read every directory: only the bvm walker runs
+# under sudo; ducl and the files it writes stay under your user
+ducl scan /mnt/data -o scan.feather --sudo
+
+# Hard-linked files: by default each link is charged size/nlink, so totals are not
+# inflated. --hardlinks first charges the whole file to the first link met instead
+# (walk-order dependent); --hardlinks full counts every link in full (du -l)
+ducl scan /mnt/data -o scan.feather --hardlinks first
+
+# Re-cut an existing capture's sidecars under a hard-link policy, without rescanning
+# (e.g. a capture made before 0.3.1, so `ducl diff` compares like with like)
+ducl agg old-scan.feather
 
 # Scan an S3 bucket
 ducl scan my-bucket -o bucket.feather --s3
@@ -29,9 +44,6 @@ ducl update ./output/ subtree.feather
 
 # Query scan data
 ducl query scan.feather --under /mnt/data/models/ --ext wav --top 10
-
-# Run bundled pwalk2 directly
-ducl pwalk2 /mnt/data --threads 64
 ```
 
 ## Development

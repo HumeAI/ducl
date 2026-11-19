@@ -6,7 +6,5 @@ build/
 .eggs/
 *.feather
 *.parquet
-src/ducl/pwalk2/pwalk2
-!src/ducl/pwalk2/pwalk2.c
 .pytest_cache/
 .venv/

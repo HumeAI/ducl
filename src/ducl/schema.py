@@ -6,7 +6,7 @@ import numpy as np
 import pyarrow as pa
 
 # ---------------------------------------------------------------------------
-# Column names for pwalk2 CSV (headerless)
+# Column names of the canonical 17-column table (SCHEMA order)
 # ---------------------------------------------------------------------------
 
 COLUMN_NAMES = [

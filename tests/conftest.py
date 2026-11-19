@@ -1,6 +1,6 @@
 """Synthetic data fixtures for dashboard tests.
 
-Generates Feather files matching the pwalk2 schema with controllable structure.
+Generates Feather files matching the canonical ducl schema with controllable structure.
 Tests use small pruning thresholds so synthetic data stays tiny.
 
 Fixture tree (~50 files across 3 levels):
@@ -40,7 +40,7 @@ TEST_TOP_N_FOLDERS = 4
 
 
 def _make_file_row(path: str, size: int, ext: str = "") -> dict:
-    """Create a file row matching the pwalk2 schema subset needed by dashboard.py."""
+    """Create a file row matching the schema subset needed by dashboard.py."""
     return {
         "inode_id": abs(hash(path)) % (2**63),
         "parent_inode_id": abs(hash(os.path.dirname(path))) % (2**63),
@@ -320,3 +320,147 @@ def updated_result(build_result: Path, rescan_feather: Path) -> Path:
 
     update(build_result, rescan_feather)
     return build_result
+
+
+# ---- Diff fixtures ----
+
+# V2 of the synthetic tree: known changes from V1
+# - track1.wav: 5GB -> 6GB (+1GB)
+# - model.dat in big_b: 1GB -> 200MB (-800MB)
+# - New file: /root/big_b/analysis.csv 500MB
+# - Removed: all /root/small_c/* files
+SYNTHETIC_FILES_V2: list[dict] = []
+SYNTHETIC_DIRS_V2: list[dict] = []
+
+SYNTHETIC_DIRS_V2.extend([
+    _make_dir_row("/root", 3),        # big_a, big_b, file_at_root.dat (small_c removed)
+    _make_dir_row("/root/big_a", 3),  # sub1, sub2, sub3
+    _make_dir_row("/root/big_a/sub1", 0),
+    _make_dir_row("/root/big_a/sub2", 0),
+    _make_dir_row("/root/big_a/sub3", 0),
+    _make_dir_row("/root/big_b", 0),
+    # /root/small_c removed entirely
+])
+
+# /root/ directly -- unchanged
+SYNTHETIC_FILES_V2.append(_make_file_row("/root/file_at_root.dat", 50_000, "dat"))
+
+# /root/big_a/sub1/ -- track1.wav grows from 5GB to 6GB
+SYNTHETIC_FILES_V2.extend([
+    _make_file_row("/root/big_a/sub1/track1.wav", 6_000_000_000, "wav"),   # was 5GB -> 6GB
+    _make_file_row("/root/big_a/sub1/track2.wav", 2_000_000_000, "wav"),   # unchanged
+    _make_file_row("/root/big_a/sub1/track3.mp3", 500_000_000, "mp3"),     # unchanged
+    _make_file_row("/root/big_a/sub1/track4.mp3", 50_000_000, "mp3"),      # unchanged
+    _make_file_row("/root/big_a/sub1/notes.txt", 200_000, "txt"),          # unchanged
+    _make_file_row("/root/big_a/sub1/readme.txt", 500, "txt"),             # unchanged
+    _make_file_row("/root/big_a/sub1/archive.tar.gz", 100_000_000, "gz"),  # unchanged
+    _make_file_row("/root/big_a/sub1/data.dat", 5_000_000, "dat"),         # unchanged
+])
+
+# /root/big_a/sub2/ -- unchanged
+SYNTHETIC_FILES_V2.extend([
+    _make_file_row("/root/big_a/sub2/video.mp4", 1_500_000_000, "mp4"),
+    _make_file_row("/root/big_a/sub2/audio.wav", 800_000_000, "wav"),
+    _make_file_row("/root/big_a/sub2/clip.mp3", 30_000_000, "mp3"),
+    _make_file_row("/root/big_a/sub2/log.txt", 2_000_000, "txt"),
+    _make_file_row("/root/big_a/sub2/config", 100, ""),
+])
+
+# /root/big_a/sub3/ -- unchanged
+SYNTHETIC_FILES_V2.extend([
+    _make_file_row("/root/big_a/sub3/tiny1.txt", 100, "txt"),
+    _make_file_row("/root/big_a/sub3/tiny2.txt", 200, "txt"),
+    _make_file_row("/root/big_a/sub3/tiny3.dat", 300, "dat"),
+])
+
+# /root/big_a/ directly -- unchanged
+SYNTHETIC_FILES_V2.extend([
+    _make_file_row("/root/big_a/index.dat", 10_000_000, "dat"),
+    _make_file_row("/root/big_a/backup.tar.gz", 400_000_000, "gz"),
+])
+
+# /root/big_b/ -- model.dat shrinks, analysis.csv is new
+SYNTHETIC_FILES_V2.extend([
+    _make_file_row("/root/big_b/dataset.tar.gz", 3_000_000_000, "gz"),  # unchanged
+    _make_file_row("/root/big_b/model.dat", 200_000_000, "dat"),         # was 1GB -> 200MB
+    _make_file_row("/root/big_b/results.txt", 5_000_000, "txt"),         # unchanged
+    _make_file_row("/root/big_b/summary.mp3", 15_000_000, "mp3"),        # unchanged
+    _make_file_row("/root/big_b/README", 800, ""),                       # unchanged
+    _make_file_row("/root/big_b/analysis.csv", 500_000_000, "csv"),      # NEW file
+])
+
+# /root/small_c/ -- REMOVED (no files)
+
+ALL_ROWS_V2 = SYNTHETIC_DIRS_V2 + SYNTHETIC_FILES_V2
+EXPECTED_TOTAL_SIZE_V2 = sum(f["size"] for f in SYNTHETIC_FILES_V2)
+
+# Net change: +1GB (track1) - 800MB (model) + 500MB (analysis) - 180B (small_c removed)
+EXPECTED_DELTA = EXPECTED_TOTAL_SIZE_V2 - EXPECTED_TOTAL_SIZE
+
+
+@pytest.fixture
+def synthetic_feather_v2(tmp_path: Path) -> Path:
+    """Write the V2 synthetic tree to a Feather file, return its path."""
+    out = tmp_path / "scan_v2.feather"
+    _write_feather(ALL_ROWS_V2, str(out))
+    return out
+
+
+@pytest.fixture
+def diff_result(tmp_path: Path, synthetic_feather: Path, synthetic_feather_v2: Path) -> Path:
+    """Run diff() with test thresholds, return the output directory."""
+    from ducl.diff import diff as diff_build
+
+    out_dir = tmp_path / "diff_output"
+    diff_build(
+        synthetic_feather,
+        synthetic_feather_v2,
+        out_dir,
+        max_tree_levels=TEST_MAX_TREE_LEVELS,
+        max_children=TEST_MAX_CHILDREN,
+        min_folder_size=TEST_MIN_FOLDER_SIZE,
+        top_n_extensions=TEST_TOP_N_EXTENSIONS,
+        top_n_folders=TEST_TOP_N_FOLDERS,
+    )
+    return out_dir
+
+
+@pytest.fixture
+def diff_identical(tmp_path: Path, synthetic_feather: Path) -> Path:
+    """Run diff() comparing a capture against itself."""
+    from ducl.diff import diff as diff_build
+
+    out_dir = tmp_path / "diff_identical"
+    diff_build(
+        synthetic_feather,
+        synthetic_feather,
+        out_dir,
+        max_tree_levels=TEST_MAX_TREE_LEVELS,
+        max_children=TEST_MAX_CHILDREN,
+        min_folder_size=TEST_MIN_FOLDER_SIZE,
+        top_n_extensions=TEST_TOP_N_EXTENSIONS,
+        top_n_folders=TEST_TOP_N_FOLDERS,
+    )
+    return out_dir
+
+
+@pytest.fixture
+def diff_result_agg(tmp_path: Path, synthetic_feather: Path, synthetic_feather_v2: Path) -> Path:
+    """Run diff() using agg sidecars for both captures."""
+    from ducl.diff import diff as diff_build
+
+    _generate_agg_sidecars(synthetic_feather)
+    _generate_agg_sidecars(synthetic_feather_v2)
+
+    out_dir = tmp_path / "diff_output_agg"
+    diff_build(
+        synthetic_feather,
+        synthetic_feather_v2,
+        out_dir,
+        max_tree_levels=TEST_MAX_TREE_LEVELS,
+        max_children=TEST_MAX_CHILDREN,
+        min_folder_size=TEST_MIN_FOLDER_SIZE,
+        top_n_extensions=TEST_TOP_N_EXTENSIONS,
+        top_n_folders=TEST_TOP_N_FOLDERS,
+    )
+    return out_dir

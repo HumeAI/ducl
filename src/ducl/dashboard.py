@@ -179,19 +179,21 @@ def compute_top_folders(
     else:
         dir_expr = pl.col("path").str.replace(r"/[^/]+$", "")
 
-    df = (
-        files_df.with_columns(dir_expr.str.split("/").alias("_parts"))
-        .explode("_parts")
-        .filter(pl.col("_parts") != "")
-    )
-
+    # Project down to the three needed columns *before* exploding, and stream it:
+    # exploding the whole frame copies every row's path/ext/leaf_folder strings once
+    # per path component. On a 22M-row agg that OOM-killed a 112 GB job.
     folder_summary = (
-        df.group_by(pl.col("_parts").alias("leaf_folder"))
+        files_df.lazy()
+        .select(dir_expr.str.split("/").alias("leaf_folder"), "size", "file_count")
+        .explode("leaf_folder")
+        .filter(pl.col("leaf_folder") != "")
+        .group_by("leaf_folder")
         .agg(
             pl.col("size").sum().alias("total_size"),
             pl.col("file_count").sum().alias("file_count"),
         )
         .sort("total_size", descending=True)
+        .collect(engine="streaming")
     )
     top = folder_summary.head(top_n)
     return top, top["leaf_folder"].to_list()
